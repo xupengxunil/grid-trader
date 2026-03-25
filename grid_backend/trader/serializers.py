@@ -1,5 +1,60 @@
+from django.contrib.auth import authenticate
+from django.contrib.auth.models import User
 from rest_framework import serializers
-from .models import GridPlan, GridRecord
+from .models import GridPlan, GridRecord, UserProfile
+
+
+class UserRegisterSerializer(serializers.Serializer):
+    username = serializers.CharField(max_length=150)
+    password = serializers.CharField(min_length=6, write_only=True)
+    email = serializers.EmailField(required=False, allow_blank=True)
+
+    def validate_username(self, value):
+        if User.objects.filter(username=value).exists():
+            raise serializers.ValidationError('该用户名已被占用。')
+        return value
+
+    def create(self, validated_data):
+        user = User.objects.create_user(
+            username=validated_data['username'],
+            password=validated_data['password'],
+            email=validated_data.get('email', ''),
+        )
+        UserProfile.objects.create(user=user, status=UserProfile.STATUS_PENDING)
+        return user
+
+
+class UserLoginSerializer(serializers.Serializer):
+    username = serializers.CharField()
+    password = serializers.CharField(write_only=True)
+
+    def validate(self, data):
+        user = authenticate(username=data['username'], password=data['password'])
+        if not user:
+            raise serializers.ValidationError('用户名或密码错误。')
+        if not user.is_active:
+            raise serializers.ValidationError('账号已被禁用。')
+        try:
+            profile = user.profile
+        except UserProfile.DoesNotExist:
+            raise serializers.ValidationError('账号状态异常，请联系管理员。')
+        if profile.status == UserProfile.STATUS_PENDING:
+            raise serializers.ValidationError('账号待审批，请等待管理员审核后登录。')
+        if profile.status == UserProfile.STATUS_REJECTED:
+            raise serializers.ValidationError('账号已被拒绝，请联系管理员。')
+        data['user'] = user
+        return data
+
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source='user.username', read_only=True)
+    email = serializers.EmailField(source='user.email', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    is_staff = serializers.BooleanField(source='user.is_staff', read_only=True)
+
+    class Meta:
+        model = UserProfile
+        fields = ['username', 'email', 'status', 'status_display', 'created_at', 'is_staff']
 
 
 class GridRecordSerializer(serializers.ModelSerializer):

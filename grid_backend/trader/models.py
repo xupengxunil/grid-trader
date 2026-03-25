@@ -1,8 +1,52 @@
+from django.conf import settings
 from django.db import models
+
+
+class UserProfile(models.Model):
+    """Extended profile for each registered user, tracking approval status."""
+    STATUS_PENDING = 'PENDING'
+    STATUS_APPROVED = 'APPROVED'
+    STATUS_REJECTED = 'REJECTED'
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, '待审批'),
+        (STATUS_APPROVED, '已通过'),
+        (STATUS_REJECTED, '已拒绝'),
+    ]
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='profile',
+        verbose_name='用户',
+    )
+    status = models.CharField(
+        max_length=10,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING,
+        verbose_name='审批状态',
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='注册时间')
+
+    class Meta:
+        db_table = 'user_profile'
+        verbose_name = '用户资料'
+        verbose_name_plural = '用户资料'
+
+    def __str__(self):
+        return f'{self.user.username} [{self.get_status_display()}]'
 
 
 class GridPlan(models.Model):
     """One grid trading plan per stock."""
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='plans',
+        verbose_name='所属用户',
+        null=True,
+        blank=True,
+    )
     stock_code = models.CharField(max_length=10, verbose_name='股票代码')
     stock_name = models.CharField(max_length=50, verbose_name='股票名称')
     base_price = models.DecimalField(max_digits=10, decimal_places=3, verbose_name='建仓基准价')

@@ -1,10 +1,37 @@
 import axios from 'axios'
+import { token, clearAuth } from '../store/auth.js'
 
 const http = axios.create({
   baseURL: '/api',
   timeout: 10000,
   headers: { 'Content-Type': 'application/json' },
 })
+
+// Attach token to every request
+http.interceptors.request.use((config) => {
+  if (token.value) {
+    config.headers['Authorization'] = `Token ${token.value}`
+  }
+  return config
+})
+
+// Redirect to login on 401
+http.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      clearAuth()
+      window.location.href = '/login'
+    }
+    return Promise.reject(error)
+  },
+)
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+export const authRegister = (data) => http.post('/auth/register/', data)
+export const authLogin = (data) => http.post('/auth/login/', data)
+export const authLogout = () => http.post('/auth/logout/')
+export const authMe = () => http.get('/auth/me/')
 
 // ── Plans ────────────────────────────────────────────────────────────────────
 export const getPlans = () => http.get('/plans/')
