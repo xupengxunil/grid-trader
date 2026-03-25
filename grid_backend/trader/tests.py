@@ -5,18 +5,32 @@ Run with:  python manage.py test trader
 import math
 from decimal import Decimal
 
+from django.contrib.auth.models import User
 from django.test import TestCase
-from django.urls import reverse
+from rest_framework.authtoken.models import Token
+from rest_framework.test import APIClient
 
-from .models import GridPlan, GridRecord
+from .models import GridPlan, GridRecord, UserProfile
 from .views import _compute_grid_records, GRID_RATIO, PART_FUNDS, PART_COUNT, SHARES_PER_LOT
+
+
+def _make_approved_user(username='testuser', password='testpass123'):
+    """Helper: create an approved user and return (user, token, api_client)."""
+    user = User.objects.create_user(username=username, password=password)
+    UserProfile.objects.create(user=user, status=UserProfile.STATUS_APPROVED)
+    token = Token.objects.create(user=user)
+    client = APIClient()
+    client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+    return user, token, client
 
 
 class GridComputationTests(TestCase):
     """Test the core grid calculation logic."""
 
     def _make_plan(self, base_price: float) -> GridPlan:
+        user = User.objects.create_user(username='u1', password='pw')
         return GridPlan(
+            user=user,
             stock_code='600000',
             stock_name='浦发银行',
             base_price=Decimal(str(base_price)),
@@ -71,14 +85,74 @@ class GridComputationTests(TestCase):
         self.assertEqual(records, [])
 
 
+class AuthTests(TestCase):
+    """Tests for the authentication endpoints."""
+
+    def test_register_success(self):
+        resp = self.client.post(
+            '/api/auth/register/',
+            data={'username': 'newuser', 'password': 'pass1234'},
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 201)
+        self.assertTrue(User.objects.filter(username='newuser').exists())
+        profile = UserProfile.objects.get(user__username='newuser')
+        self.assertEqual(profile.status, UserProfile.STATUS_PENDING)
+
+    def test_register_duplicate_username(self):
+        User.objects.create_user(username='existing', password='pw')
+        resp = self.client.post(
+            '/api/auth/register/',
+            data={'username': 'existing', 'password': 'pw2'},
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_login_pending_rejected(self):
+        user = User.objects.create_user(username='pending', password='pw')
+        UserProfile.objects.create(user=user, status=UserProfile.STATUS_PENDING)
+        resp = self.client.post(
+            '/api/auth/login/',
+            data={'username': 'pending', 'password': 'pw'},
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_login_approved_success(self):
+        _, _, client = _make_approved_user('approved', 'pass1234')
+        resp = self.client.post(
+            '/api/auth/login/',
+            data={'username': 'approved', 'password': 'pass1234'},
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('token', resp.json())
+
+    def test_unauthenticated_access_denied(self):
+        resp = self.client.get('/api/plans/')
+        self.assertEqual(resp.status_code, 401)
+
+    def test_pending_user_access_denied(self):
+        user = User.objects.create_user(username='pendinguser', password='pw')
+        UserProfile.objects.create(user=user, status=UserProfile.STATUS_PENDING)
+        token = Token.objects.create(user=user)
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+        resp = client.get('/api/plans/')
+        self.assertEqual(resp.status_code, 403)
+
+
 class PlanAPITests(TestCase):
     """Integration tests for the plan and record REST endpoints."""
+
+    def setUp(self):
+        self.user, self.token, self.client = _make_approved_user()
 
     def test_create_plan_success(self):
         resp = self.client.post(
             '/api/plans/',
             data={'stock_code': '600000', 'stock_name': '浦发银行', 'base_price': '10.000'},
-            content_type='application/json',
+            format='json',
         )
         self.assertEqual(resp.status_code, 201)
         data = resp.json()
@@ -89,7 +163,7 @@ class PlanAPITests(TestCase):
         resp = self.client.post(
             '/api/plans/',
             data={'stock_code': 'TEST', 'stock_name': '测试', 'base_price': '200.000'},
-            content_type='application/json',
+            format='json',
         )
         self.assertEqual(resp.status_code, 400)
 
@@ -97,18 +171,30 @@ class PlanAPITests(TestCase):
         self.client.post(
             '/api/plans/',
             data={'stock_code': '000001', 'stock_name': '平安银行', 'base_price': '12.000'},
-            content_type='application/json',
+            format='json',
         )
         resp = self.client.get('/api/plans/')
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(len(resp.json()), 1)
+
+    def test_data_isolation(self):
+        """User A cannot see User B's plans."""
+        self.client.post(
+            '/api/plans/',
+            data={'stock_code': '600000', 'stock_name': '浦发银行', 'base_price': '10.000'},
+            format='json',
+        )
+        _, _, client_b = _make_approved_user('userB')
+        resp = client_b.get('/api/plans/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.json()), 0)
 
     def test_buy_and_sell_flow(self):
         # Create plan
         resp = self.client.post(
             '/api/plans/',
             data={'stock_code': '600000', 'stock_name': '浦发银行', 'base_price': '10.000'},
-            content_type='application/json',
+            format='json',
         )
         plan_data = resp.json()
         record_id = plan_data['records'][0]['id']
@@ -117,7 +203,7 @@ class PlanAPITests(TestCase):
         buy_resp = self.client.post(
             f'/api/records/{record_id}/buy/',
             data={'price': '10.100'},
-            content_type='application/json',
+            format='json',
         )
         self.assertEqual(buy_resp.status_code, 200)
         self.assertEqual(buy_resp.json()['status'], 'HOLDING')
@@ -126,7 +212,7 @@ class PlanAPITests(TestCase):
         sell_resp = self.client.post(
             f'/api/records/{record_id}/sell/',
             data={'price': '10.400'},
-            content_type='application/json',
+            format='json',
         )
         self.assertEqual(sell_resp.status_code, 200)
         rec = sell_resp.json()
@@ -139,18 +225,18 @@ class PlanAPITests(TestCase):
         resp = self.client.post(
             '/api/plans/',
             data={'stock_code': '600000', 'stock_name': '浦发银行', 'base_price': '10.000'},
-            content_type='application/json',
+            format='json',
         )
         record_id = resp.json()['records'][0]['id']
         self.client.post(
             f'/api/records/{record_id}/buy/',
             data={'price': '10.000'},
-            content_type='application/json',
+            format='json',
         )
         resp2 = self.client.post(
             f'/api/records/{record_id}/buy/',
             data={'price': '10.000'},
-            content_type='application/json',
+            format='json',
         )
         self.assertEqual(resp2.status_code, 400)
 
@@ -158,13 +244,13 @@ class PlanAPITests(TestCase):
         resp = self.client.post(
             '/api/plans/',
             data={'stock_code': '600000', 'stock_name': '浦发银行', 'base_price': '10.000'},
-            content_type='application/json',
+            format='json',
         )
         record_id = resp.json()['records'][0]['id']
         resp2 = self.client.post(
             f'/api/records/{record_id}/sell/',
             data={'price': '10.500'},
-            content_type='application/json',
+            format='json',
         )
         self.assertEqual(resp2.status_code, 400)
 
@@ -173,19 +259,19 @@ class PlanAPITests(TestCase):
         resp = self.client.post(
             '/api/plans/',
             data={'stock_code': '600000', 'stock_name': '浦发银行', 'base_price': '10.000'},
-            content_type='application/json',
+            format='json',
         )
         records = resp.json()['records']
         for rec in records:
             self.client.post(
                 f'/api/records/{rec["id"]}/buy/',
                 data={'price': str(rec['target_buy_price'])},
-                content_type='application/json',
+                format='json',
             )
             self.client.post(
                 f'/api/records/{rec["id"]}/sell/',
                 data={'price': str(rec['target_sell_price'])},
-                content_type='application/json',
+                format='json',
             )
 
         stats_resp = self.client.get('/api/statistics/')
@@ -198,10 +284,22 @@ class PlanAPITests(TestCase):
         resp = self.client.post(
             '/api/plans/',
             data={'stock_code': '600000', 'stock_name': '浦发银行', 'base_price': '10.000'},
-            content_type='application/json',
+            format='json',
         )
         plan_id = resp.json()['id']
         del_resp = self.client.delete(f'/api/plans/{plan_id}/')
         self.assertEqual(del_resp.status_code, 204)
         self.assertEqual(GridPlan.objects.count(), 0)
         self.assertEqual(GridRecord.objects.count(), 0)
+
+    def test_cannot_access_other_users_plan(self):
+        """User B cannot access User A's plan."""
+        resp = self.client.post(
+            '/api/plans/',
+            data={'stock_code': '600000', 'stock_name': '浦发银行', 'base_price': '10.000'},
+            format='json',
+        )
+        plan_id = resp.json()['id']
+        _, _, client_b = _make_approved_user('userB')
+        resp2 = client_b.get(f'/api/plans/{plan_id}/')
+        self.assertEqual(resp2.status_code, 404)

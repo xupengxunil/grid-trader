@@ -4,11 +4,17 @@ from decimal import Decimal
 from django.db.models import Sum, Count
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.decorators import api_view
+from rest_framework.authtoken.models import Token
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
-from .models import GridPlan, GridRecord
-from .serializers import GridPlanSerializer, GridPlanListSerializer, GridRecordSerializer
+from .models import GridPlan, GridRecord, UserProfile
+from .permissions import IsApprovedUser
+from .serializers import (
+    GridPlanSerializer, GridPlanListSerializer, GridRecordSerializer,
+    UserRegisterSerializer, UserLoginSerializer, UserProfileSerializer,
+)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 PART_COUNT = 5          # number of grid parts
@@ -55,13 +61,62 @@ def _compute_grid_records(plan: GridPlan) -> list[dict]:
     return records
 
 
+# ── Auth endpoints ─────────────────────────────────────────────────────────────
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def register(request):
+    """Register a new user (account starts as PENDING, awaiting admin approval)."""
+    serializer = UserRegisterSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    serializer.save()
+    return Response(
+        {'detail': '注册成功，请等待管理员审批后登录。'},
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def login(request):
+    """Login and return an auth token."""
+    serializer = UserLoginSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    user = serializer.validated_data['user']
+    token, _ = Token.objects.get_or_create(user=user)
+    profile_data = UserProfileSerializer(user.profile).data
+    return Response({'token': token.key, 'user': profile_data})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def logout(request):
+    """Invalidate the current auth token."""
+    request.user.auth_token.delete()
+    return Response({'detail': '已退出登录。'})
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def me(request):
+    """Return the current user's profile info."""
+    try:
+        profile = request.user.profile
+    except UserProfile.DoesNotExist:
+        return Response({'detail': '用户资料不存在。'}, status=status.HTTP_404_NOT_FOUND)
+    return Response(UserProfileSerializer(profile).data)
+
+
 # ── Plan endpoints ─────────────────────────────────────────────────────────────
 
 @api_view(['GET', 'POST'])
+@permission_classes([IsApprovedUser])
 def plan_list_create(request):
     """List all plans (GET) or create a new plan with grid records (POST)."""
     if request.method == 'GET':
-        plans = GridPlan.objects.prefetch_related('records').all()
+        plans = GridPlan.objects.prefetch_related('records').filter(user=request.user)
         serializer = GridPlanListSerializer(plans, many=True)
         return Response(serializer.data)
 
@@ -70,7 +125,7 @@ def plan_list_create(request):
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    plan = serializer.save()
+    plan = serializer.save(user=request.user)
     grid_rows = _compute_grid_records(plan)
     if not grid_rows:
         plan.delete()
@@ -87,10 +142,13 @@ def plan_list_create(request):
 
 
 @api_view(['GET', 'DELETE'])
+@permission_classes([IsApprovedUser])
 def plan_detail(request, plan_id):
-    """Retrieve (GET) or delete (DELETE) a single plan."""
+    """Retrieve (GET) or delete (DELETE) a single plan (must belong to current user)."""
     try:
-        plan = GridPlan.objects.prefetch_related('records').get(pk=plan_id)
+        plan = GridPlan.objects.prefetch_related('records').get(
+            pk=plan_id, user=request.user
+        )
     except GridPlan.DoesNotExist:
         return Response({'detail': '计划不存在。'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -104,10 +162,11 @@ def plan_detail(request, plan_id):
 # ── Record endpoints ───────────────────────────────────────────────────────────
 
 @api_view(['GET'])
+@permission_classes([IsApprovedUser])
 def record_list(request, plan_id):
-    """List all grid records for a plan."""
+    """List all grid records for a plan (must belong to current user)."""
     try:
-        plan = GridPlan.objects.get(pk=plan_id)
+        plan = GridPlan.objects.get(pk=plan_id, user=request.user)
     except GridPlan.DoesNotExist:
         return Response({'detail': '计划不存在。'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -116,10 +175,13 @@ def record_list(request, plan_id):
 
 
 @api_view(['POST'])
+@permission_classes([IsApprovedUser])
 def record_buy(request, record_id):
     """Mark a PENDING record as HOLDING (execute buy)."""
     try:
-        record = GridRecord.objects.select_related('plan').get(pk=record_id)
+        record = GridRecord.objects.select_related('plan').get(
+            pk=record_id, plan__user=request.user
+        )
     except GridRecord.DoesNotExist:
         return Response({'detail': '记录不存在。'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -149,10 +211,13 @@ def record_buy(request, record_id):
 
 
 @api_view(['POST'])
+@permission_classes([IsApprovedUser])
 def record_sell(request, record_id):
     """Mark a HOLDING record as CLEARED (execute sell)."""
     try:
-        record = GridRecord.objects.select_related('plan').get(pk=record_id)
+        record = GridRecord.objects.select_related('plan').get(
+            pk=record_id, plan__user=request.user
+        )
     except GridRecord.DoesNotExist:
         return Response({'detail': '记录不存在。'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -185,16 +250,20 @@ def record_sell(request, record_id):
 # ── Statistics endpoint ────────────────────────────────────────────────────────
 
 @api_view(['GET'])
+@permission_classes([IsApprovedUser])
 def statistics(request):
     """
-    Return profit statistics for CLEARED records.
+    Return profit statistics for CLEARED records (current user only).
 
     Query params:
       start_date  – ISO-8601 date string (inclusive)
       end_date    – ISO-8601 date string (inclusive, end of day)
       plan_id     – optional; filter to a single plan
     """
-    records = GridRecord.objects.filter(status=GridRecord.STATUS_CLEARED)
+    records = GridRecord.objects.filter(
+        status=GridRecord.STATUS_CLEARED,
+        plan__user=request.user,
+    )
 
     start_date = request.query_params.get('start_date')
     end_date = request.query_params.get('end_date')
