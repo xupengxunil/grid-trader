@@ -11,11 +11,11 @@
     <!-- Plan cards -->
     <el-empty v-if="!loading && plans.length === 0" description="暂无交易计划，点击右上角新建" />
 
-    <el-row :gutter="16" v-loading="loading">
+    <el-row :gutter="24" v-loading="loading">
       <el-col
         v-for="plan in plans"
         :key="plan.id"
-        :xs="24" :sm="12" :lg="8"
+        :xs="24" :sm="24" :md="12" :lg="12" :xl="8"
         class="plan-col"
       >
         <el-card class="plan-card" shadow="hover" @click="goDetail(plan.id)">
@@ -33,24 +33,29 @@
             </div>
           </template>
 
-          <el-descriptions :column="2" size="small">
+          <el-descriptions :column="2" size="default" class="plan-desc">
             <el-descriptions-item label="基准价">
-              ¥{{ plan.base_price }}
+              <span class="highlight-text">¥{{ plan.base_price }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="网格大小">
+              <span class="highlight-text">{{ plan.grid_ratio ? (plan.grid_ratio * 100).toFixed(1) + '%' : '3.0%' }}</span>
             </el-descriptions-item>
             <el-descriptions-item label="总资金">
-              ¥{{ plan.total_funds }}
+              <span class="highlight-text">¥{{ plan.total_funds }}</span>
             </el-descriptions-item>
             <el-descriptions-item label="网格档位">
-              {{ plan.record_count }} 档
+              <span class="highlight-text">{{ plan.record_count }} 档</span>
             </el-descriptions-item>
-            <el-descriptions-item label="持仓中">
-              {{ plan.holding_count }} 档
+            <el-descriptions-item label="已持仓">
+              <span class="holding-text">{{ plan.holding_count }} 档</span>
             </el-descriptions-item>
             <el-descriptions-item label="已清仓">
-              {{ plan.cleared_count }} 档
+              <span class="cleared-text">{{ plan.cleared_count }} 档</span>
             </el-descriptions-item>
-            <el-descriptions-item label="创建时间">
-              {{ formatDate(plan.created_at) }}
+            <el-descriptions-item label="预估净收益">
+              <span :class="['profit-value', plan.net_profit >= 0 ? 'profit-text' : 'loss-text']">
+                {{ plan.net_profit >= 0 ? '+' : '' }}{{ Number(plan.net_profit || 0).toFixed(2) }}
+              </span>
             </el-descriptions-item>
           </el-descriptions>
 
@@ -89,11 +94,22 @@
             style="width:100%"
           />
         </el-form-item>
+        <el-form-item label="网格大小(%)" prop="grid_ratio">
+          <el-input-number
+            v-model="ratioPercent"
+            :precision="1"
+            :step="0.5"
+            :min="0.5"
+            :max="20"
+            style="width:100%"
+            placeholder="例如输入3表示3%"
+          />
+        </el-form-item>
         <el-alert
           type="info"
           :closable="false"
           style="margin-top:8px"
-          description="系统将按每份约1万元（总资金÷5）和基准价自动生成5档买卖网格（间距3%）。每档需至少可买1手（100股）。"
+          :description="`系统将按每份约1万元（总资金÷5）和基准价自动生成5档买卖网格（间距${ratioPercent}%）。每档需至少可买1手（100股）。`"
         />
       </el-form>
       <template #footer>
@@ -117,6 +133,7 @@ const loading = ref(false)
 const showCreateDialog = ref(false)
 const creating = ref(false)
 const formRef = ref(null)
+const ratioPercent = ref(3.0)
 
 const form = ref({
   stock_code: '',
@@ -146,6 +163,7 @@ async function fetchPlans() {
 
 function resetForm() {
   form.value = { stock_code: '', stock_name: '', base_price: null, total_funds: 50000 }
+  ratioPercent.value = 3.0
   formRef.value?.resetFields()
 }
 
@@ -154,8 +172,13 @@ async function submitCreate() {
   if (!valid) return
 
   creating.value = true
+  const payload = {
+    ...form.value,
+    grid_ratio: ratioPercent.value / 100, // 转换百分比为小数
+  }
+
   try {
-    await createPlan(form.value)
+    await createPlan(payload)
     ElMessage.success('网格计划创建成功！')
     showCreateDialog.value = false
     await fetchPlans()
@@ -203,9 +226,23 @@ onMounted(fetchPlans)
 }
 .page-header h2 { font-size: 20px; color: #303133; }
 
-.plan-col { margin-bottom: 16px; }
+.plan-col { margin-bottom: 24px; }
 
-.plan-card { cursor: pointer; transition: transform .15s; }
+.plan-card { 
+  cursor: pointer; 
+  transition: transform .15s; 
+  height: 320px;
+  display: flex;
+  flex-direction: column;
+}
+
+:deep(.el-card__body) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
 .plan-card:hover { transform: translateY(-2px); }
 
 .card-header {
@@ -224,4 +261,27 @@ onMounted(fetchPlans)
 .stock-name { flex: 1; font-weight: 600; font-size: 15px; }
 
 .card-footer { margin-top: 12px; text-align: right; }
+
+.plan-desc {
+  margin-top: 8px;
+}
+:deep(.el-descriptions__label) {
+  font-size: 14px;
+  color: #606266;
+}
+:deep(.el-descriptions__content) {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.highlight-text { color: #303133; font-weight: 600; }
+.holding-text { color: #e6a23c; font-weight: 600; }
+.cleared-text { color: #67c23a; font-weight: 600; }
+
+.profit-value {
+  font-size: 16px;
+  font-weight: bold;
+}
+.profit-text { color: #f56c6c; } /* A-share convention: red gain */
+.loss-text   { color: #67c23a; } /* A-share convention: green loss */
 </style>

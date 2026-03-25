@@ -38,23 +38,39 @@
 
     <!-- Summary cards -->
     <el-row :gutter="16" style="margin-top:16px">
-      <el-col :xs="24" :sm="8">
+      <el-col :xs="24" :sm="12" :lg="8" style="margin-bottom:16px">
         <el-card class="summary-card" shadow="always">
           <div class="summary-icon">💰</div>
-          <div class="summary-label">累计收益（元）</div>
+          <div class="summary-label">总收益（元）</div>
           <div :class="['summary-value', stats.total_profit >= 0 ? 'profit' : 'loss']">
             {{ stats.total_profit >= 0 ? '+' : '' }}{{ Number(stats.total_profit).toFixed(2) }}
           </div>
         </el-card>
       </el-col>
-      <el-col :xs="24" :sm="8">
+      <el-col :xs="24" :sm="12" :lg="8" style="margin-bottom:16px">
+        <el-card class="summary-card" shadow="always">
+          <div class="summary-icon">💸</div>
+          <div class="summary-label">预估手续费（元）</div>
+          <div class="summary-value loss">-{{ stats.total_operations * 15 }}</div>
+        </el-card>
+      </el-col>
+      <el-col :xs="24" :sm="12" :lg="8" style="margin-bottom:16px">
+         <el-card class="summary-card" shadow="always">
+          <div class="summary-icon">💎</div>
+          <div class="summary-label">预估净收益（元）</div>
+          <div :class="['summary-value', (stats.total_profit - stats.total_operations * 15) >= 0 ? 'profit' : 'loss']">
+            {{ (stats.total_profit - stats.total_operations * 15) >= 0 ? '+' : '' }}{{ Number(stats.total_profit - stats.total_operations * 15).toFixed(2) }}
+          </div>
+        </el-card>
+      </el-col>
+      <el-col :xs="24" :sm="12" :lg="12" style="margin-bottom:16px">
         <el-card class="summary-card" shadow="always">
           <div class="summary-icon">📊</div>
           <div class="summary-label">操作总次数（笔）</div>
           <div class="summary-value neutral">{{ stats.total_operations }}</div>
         </el-card>
       </el-col>
-      <el-col :xs="24" :sm="8">
+      <el-col :xs="24" :sm="12" :lg="12" style="margin-bottom:16px">
         <el-card class="summary-card" shadow="always">
           <div class="summary-icon">📈</div>
           <div class="summary-label">涉及股票（只）</div>
@@ -70,10 +86,22 @@
         <el-table-column label="股票代码" prop="stock_code" width="120" align="center" />
         <el-table-column label="股票名称" prop="stock_name" />
         <el-table-column label="操作次数" prop="operations" align="center" />
-        <el-table-column label="收益(元)" align="right">
+        <el-table-column label="预估手续费(元)" align="right">
+          <template #default="{ row }">
+            <span class="loss">-{{ row.operations * 15 }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="总收益(元)" align="right">
           <template #default="{ row }">
             <span :class="row.profit >= 0 ? 'profit' : 'loss'">
               {{ row.profit >= 0 ? '+' : '' }}{{ Number(row.profit).toFixed(2) }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="净收益(元)" align="right">
+          <template #default="{ row }">
+            <span :class="(row.profit - row.operations * 15) >= 0 ? 'profit' : 'loss'">
+              {{ (row.profit - row.operations * 15) >= 0 ? '+' : '' }}{{ Number(row.profit - row.operations * 15).toFixed(2) }}
             </span>
           </template>
         </el-table-column>

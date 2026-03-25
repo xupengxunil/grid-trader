@@ -1,5 +1,9 @@
 <template>
-  <el-container class="layout">
+  <div v-if="isLoginPage" style="min-height:100vh;background:#f0f2f5;">
+    <router-view />
+  </div>
+
+  <el-container v-else class="layout">
     <el-header class="header">
       <div class="logo">📈 网格交易管理系统</div>
       <el-menu
@@ -20,6 +24,28 @@
           收益统计
         </el-menu-item>
       </el-menu>
+
+      <!-- User info area -->
+      <div class="user-area">
+        <el-tag
+          v-if="user"
+          :type="statusTagType"
+          size="small"
+          style="margin-right:8px"
+        >
+          {{ user.status_display || user.status }}
+        </el-tag>
+        <span class="username">{{ user?.username }}</span>
+        <el-button
+          type="danger"
+          size="small"
+          plain
+          style="margin-left:12px"
+          @click="handleLogout"
+        >
+          退出
+        </el-button>
+      </div>
     </el-header>
 
     <el-main class="main">
@@ -30,13 +56,42 @@
 
 <script setup>
 import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { authLogout } from './api/index.js'
+import { user, clearAuth } from './store/auth.js'
 
 const route = useRoute()
+const router = useRouter()
+
+const isLoginPage = computed(() =>
+  route.path === '/login' || route.path === '/register'
+)
+
 const activeMenu = computed(() => {
   if (route.path.startsWith('/plans')) return '/plans'
   return route.path
 })
+
+const statusTagType = computed(() => {
+  const map = { APPROVED: 'success', PENDING: 'warning', REJECTED: 'danger' }
+  return map[user.value?.status] ?? 'info'
+})
+
+async function handleLogout() {
+  try {
+    await ElMessageBox.confirm('确定要退出登录吗？', '提示', {
+      confirmButtonText: '退出',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+    await authLogout().catch(() => {})
+    clearAuth()
+    router.push('/login')
+  } catch {
+    // user cancelled
+  }
+}
 </script>
 
 <style>
@@ -66,5 +121,22 @@ body { background: #f0f2f5; font-family: 'PingFang SC', 'Microsoft YaHei', sans-
 
 .nav-menu { border-bottom: none; flex: 1; }
 
-.main { padding: 24px; max-width: 1200px; margin: 0 auto; }
+.user-area {
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  margin-left: 16px;
+}
+
+.username {
+  color: #cdd3e0;
+  font-size: 14px;
+}
+
+.main { 
+  padding: 24px; 
+  max-width: 1600px; /* 增加页面最大宽度以容纳更宽的卡片 */
+  margin: 0 auto; 
+  width: 100%;
+}
 </style>

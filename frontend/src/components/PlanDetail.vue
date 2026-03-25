@@ -13,6 +13,9 @@
             <span class="stock-code">{{ plan.stock_code }}</span>
             <span class="stock-name">{{ plan.stock_name }}</span>
             <span class="base-price">基准价：¥{{ plan.base_price }}</span>
+            <span class="grid-ratio" style="margin-left:8px; color:#606266; font-size:14px">
+              网格大小：{{ plan.grid_ratio ? (plan.grid_ratio * 100).toFixed(1) + '%' : '3.0%' }}
+            </span>
           </div>
         </template>
         <el-row :gutter="16">
@@ -38,6 +41,31 @@
             <div class="stat-item cleared">
               <div class="stat-value">{{ plan.cleared_count }}</div>
               <div class="stat-label">已清仓</div>
+            </div>
+          </el-col>
+        </el-row>
+        <el-divider style="margin: 12px 0;" />
+        <el-row :gutter="16">
+          <el-col :span="8">
+            <div class="stat-item">
+              <div :class="['stat-value', realizedProfit >= 0 ? 'profit' : 'loss']">
+                {{ realizedProfit >= 0 ? '+' : '' }}{{ realizedProfit.toFixed(2) }}
+              </div>
+              <div class="stat-label">平仓总收益 (元)</div>
+            </div>
+          </el-col>
+          <el-col :span="8">
+            <div class="stat-item loss">
+              <div class="stat-value">-{{ totalFee }}</div>
+              <div class="stat-label">预估手续费 (元)</div>
+            </div>
+          </el-col>
+          <el-col :span="8">
+             <div class="stat-item">
+              <div :class="['stat-value', netProfit >= 0 ? 'profit' : 'loss']">
+                {{ netProfit >= 0 ? '+' : '' }}{{ netProfit.toFixed(2) }}
+              </div>
+              <div class="stat-label">预估净收益 (元)</div>
             </div>
           </el-col>
         </el-row>
@@ -78,6 +106,11 @@
               {{ row.buy_amount ? '¥' + row.buy_amount : '-' }}
             </template>
           </el-table-column>
+          <el-table-column label="买入时间" align="center" width="160">
+            <template #default="{ row }">
+              {{ formatTime(row.buy_time) }}
+            </template>
+          </el-table-column>
           <el-table-column label="实际卖出价" align="right">
             <template #default="{ row }">
               {{ row.actual_sell_price ? '¥' + row.actual_sell_price : '-' }}
@@ -86,6 +119,11 @@
           <el-table-column label="卖出金额" align="right">
             <template #default="{ row }">
               {{ row.sell_amount ? '¥' + row.sell_amount : '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="卖出时间" align="center" width="160">
+            <template #default="{ row }">
+              {{ formatTime(row.sell_time) }}
             </template>
           </el-table-column>
           <el-table-column label="收益" align="right" width="100">
@@ -193,6 +231,31 @@ const pendingCount = computed(() =>
   plan.value?.records.filter(r => r.status === 'PENDING').length ?? 0
 )
 
+const totalOperations = computed(() => {
+  if (!plan.value) return 0
+  // 每清仓1档代表有买入和卖出2次操作，按要求只计算清仓的手续费
+  return (plan.value.cleared_count || 0) * 2
+})
+
+const totalFee = computed(() => {
+  if (!plan.value) return 0
+  // 仅计算清仓的操作，每清仓1档收取一次15元手续费
+  return (plan.value.cleared_count || 0) * 15
+})
+
+const realizedProfit = computed(() => {
+  if (!plan.value) return 0
+  let p = 0
+  for (const r of plan.value.records) {
+    if (r.status === 'CLEARED' && r.profit) {
+      p += Number(r.profit)
+    }
+  }
+  return p
+})
+
+const netProfit = computed(() => realizedProfit.value - totalFee.value)
+
 async function fetchPlan() {
   loading.value = true
   try {
@@ -207,6 +270,16 @@ async function fetchPlan() {
 
 function tagType(status) {
   return { PENDING: 'info', HOLDING: 'warning', CLEARED: 'success' }[status] ?? ''
+}
+
+function formatTime(dateStr) {
+  if (!dateStr) return '-'
+  return new Date(dateStr).toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 // ── Buy dialog ────────────────────────────────────────────────────────────────
