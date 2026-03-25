@@ -1,0 +1,83 @@
+from django.db import models
+
+
+class GridPlan(models.Model):
+    """One grid trading plan per stock."""
+    stock_code = models.CharField(max_length=10, verbose_name='股票代码')
+    stock_name = models.CharField(max_length=50, verbose_name='股票名称')
+    base_price = models.DecimalField(max_digits=10, decimal_places=3, verbose_name='建仓基准价')
+    total_funds = models.DecimalField(
+        max_digits=12, decimal_places=2, default=50000.00, verbose_name='总资金(元)'
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+
+    class Meta:
+        db_table = 'grid_plan'
+        verbose_name = '网格交易计划'
+        verbose_name_plural = '网格交易计划'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.stock_name}({self.stock_code}) - ¥{self.base_price}'
+
+
+class GridRecord(models.Model):
+    """One independent trade record per grid level (part)."""
+    STATUS_PENDING = 'PENDING'   # 待买入
+    STATUS_HOLDING = 'HOLDING'   # 持仓中
+    STATUS_CLEARED = 'CLEARED'   # 已清仓
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, '待买入'),
+        (STATUS_HOLDING, '持仓中'),
+        (STATUS_CLEARED, '已清仓'),
+    ]
+
+    plan = models.ForeignKey(
+        GridPlan, on_delete=models.CASCADE, related_name='records', verbose_name='所属计划'
+    )
+    part_index = models.IntegerField(verbose_name='档位编号')  # 1–5
+
+    # Grid target prices (computed at plan creation)
+    target_buy_price = models.DecimalField(
+        max_digits=10, decimal_places=3, verbose_name='计划买入价'
+    )
+    target_sell_price = models.DecimalField(
+        max_digits=10, decimal_places=3, verbose_name='计划卖出价'
+    )
+    volume = models.IntegerField(verbose_name='买入股数(100的整数倍)')
+
+    # Actual transaction data (filled in by user)
+    actual_buy_price = models.DecimalField(
+        max_digits=10, decimal_places=3, null=True, blank=True, verbose_name='实际买入价'
+    )
+    buy_amount = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True, verbose_name='买入金额'
+    )
+    buy_time = models.DateTimeField(null=True, blank=True, verbose_name='买入时间')
+
+    actual_sell_price = models.DecimalField(
+        max_digits=10, decimal_places=3, null=True, blank=True, verbose_name='实际卖出价'
+    )
+    sell_amount = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True, verbose_name='卖出金额'
+    )
+    sell_time = models.DateTimeField(null=True, blank=True, verbose_name='卖出时间')
+
+    profit = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0, verbose_name='收益(元)'
+    )
+    status = models.CharField(
+        max_length=10, choices=STATUS_CHOICES, default=STATUS_PENDING, verbose_name='状态'
+    )
+
+    class Meta:
+        db_table = 'grid_record'
+        verbose_name = '网格交易记录'
+        verbose_name_plural = '网格交易记录'
+        ordering = ['part_index']
+        unique_together = [('plan', 'part_index')]
+
+    def __str__(self):
+        return f'{self.plan.stock_name} 第{self.part_index}档 [{self.get_status_display()}]'
