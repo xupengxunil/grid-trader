@@ -1,4 +1,4 @@
-from django.urls import path
+﻿from django.urls import path
 from . import views
 
 urlpatterns = [
@@ -16,7 +16,18 @@ urlpatterns = [
     # Record actions
     path('records/<int:record_id>/buy/', views.record_buy, name='record-buy'),
     path('records/<int:record_id>/sell/', views.record_sell, name='record-sell'),
+    path('records/<int:record_id>/restart/', views.record_restart, name='record-restart'),
 
     # Statistics
     path('statistics/', views.statistics, name='statistics'),
+
+    # Quotes
+    path('quotes/', views.stock_quotes, name='stock-quotes'),
+    path('kline/', views.stock_kline, name='stock-kline'),
+    path('search/', views.stock_search, name='stock-search'),
+    
+    # Watchlist
+    path('watchlist/', views.watchlist_list_create, name='watchlist-list-create'),
+    path('watchlist/<str:code>/', views.watchlist_delete, name='watchlist-delete'),
 ]
+

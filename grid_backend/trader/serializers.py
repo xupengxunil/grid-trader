@@ -67,13 +67,13 @@ class GridRecordSerializer(serializers.ModelSerializer):
             'target_buy_price', 'target_sell_price', 'volume',
             'actual_buy_price', 'buy_amount', 'buy_time',
             'actual_sell_price', 'sell_amount', 'sell_time',
-            'profit', 'status', 'status_display',
+            'profit', 'status', 'status_display', 'is_active_cycle',
         ]
         read_only_fields = [
             'id', 'part_index',
             'target_buy_price', 'target_sell_price', 'volume',
             'buy_amount', 'sell_amount', 'profit',
-            'status', 'status_display',
+            'status', 'status_display', 'is_active_cycle',
         ]
 
 
@@ -86,20 +86,20 @@ class GridPlanSerializer(serializers.ModelSerializer):
     class Meta:
         model = GridPlan
         fields = [
-            'id', 'stock_code', 'stock_name', 'base_price', 'total_funds', 'grid_ratio',
-            'created_at', 'updated_at',
+            'id', 'stock_code', 'stock_name', 'base_price', 'total_funds', 'part_count', 'grid_ratio',
+            'is_active', 'created_at', 'updated_at',
             'records', 'record_count', 'holding_count', 'cleared_count',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
     def get_record_count(self, obj):
-        return obj.records.count()
+        return obj.records.filter(is_active_cycle=True).count()
 
     def get_holding_count(self, obj):
-        return obj.records.filter(status=GridRecord.STATUS_HOLDING).count()
+        return obj.records.filter(status=GridRecord.STATUS_HOLDING, is_active_cycle=True).count()
 
     def get_cleared_count(self, obj):
-        return obj.records.filter(status=GridRecord.STATUS_CLEARED).count()
+        return obj.records.filter(status=GridRecord.STATUS_CLEARED, is_active_cycle=True).count()
 
 
 class GridPlanListSerializer(serializers.ModelSerializer):
@@ -113,19 +113,19 @@ class GridPlanListSerializer(serializers.ModelSerializer):
     class Meta:
         model = GridPlan
         fields = [
-            'id', 'stock_code', 'stock_name', 'base_price', 'total_funds', 'grid_ratio',
-            'created_at', 'record_count', 'holding_count', 'cleared_count',
+            'id', 'stock_code', 'stock_name', 'base_price', 'total_funds', 'part_count', 'grid_ratio',
+            'is_active', 'created_at', 'record_count', 'holding_count', 'cleared_count',
             'realized_profit', 'net_profit',
         ]
 
     def get_record_count(self, obj):
-        return obj.records.count()
+        return obj.records.filter(is_active_cycle=True).count()
 
     def get_holding_count(self, obj):
-        return obj.records.filter(status=GridRecord.STATUS_HOLDING).count()
+        return obj.records.filter(status=GridRecord.STATUS_HOLDING, is_active_cycle=True).count()
 
     def get_cleared_count(self, obj):
-        return obj.records.filter(status=GridRecord.STATUS_CLEARED).count()
+        return obj.records.filter(status=GridRecord.STATUS_CLEARED, is_active_cycle=True).count()
 
     def get_realized_profit(self, obj):
         from django.db.models import Sum
@@ -133,6 +133,15 @@ class GridPlanListSerializer(serializers.ModelSerializer):
         return result['profit__sum'] or 0
 
     def get_net_profit(self, obj):
-        cleared = self.get_cleared_count(obj)
+        cleared = obj.records.filter(status=GridRecord.STATUS_CLEARED).count()
         fee = cleared * 15
         return float(self.get_realized_profit(obj)) - fee
+
+from .models import StockWatchlist
+
+class StockWatchlistSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StockWatchlist
+        fields = ['id', 'stock_code', 'stock_name', 'created_at']
+        read_only_fields = ['id', 'created_at']
+

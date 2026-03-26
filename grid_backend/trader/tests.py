@@ -11,7 +11,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
 
 from .models import GridPlan, GridRecord, UserProfile
-from .views import _compute_grid_records, GRID_RATIO, PART_FUNDS, PART_COUNT, SHARES_PER_LOT
+from .views import _compute_grid_records, GRID_RATIO, SHARES_PER_LOT
 
 
 def _make_approved_user(username='testuser', password='testpass123'):
@@ -41,7 +41,7 @@ class GridComputationTests(TestCase):
         """A normal base price should produce 5 grid records."""
         plan = self._make_plan(10.00)
         records = _compute_grid_records(plan)
-        self.assertEqual(len(records), PART_COUNT)
+        self.assertEqual(len(records), 5)
 
     def test_grid_buy_prices_decrease(self):
         """Each subsequent part's buy price must be 3 % lower."""
@@ -75,7 +75,7 @@ class GridComputationTests(TestCase):
         plan = self._make_plan(base)
         records = _compute_grid_records(plan)
         for row in records:
-            expected = math.floor(PART_FUNDS / float(row['target_buy_price']) / 100) * 100
+            expected = math.floor((50000.0 / 5) / float(row['target_buy_price']) / 100) * 100
             self.assertEqual(row['volume'], expected)
 
     def test_too_expensive_stock_returns_empty(self):
@@ -157,7 +157,7 @@ class PlanAPITests(TestCase):
         self.assertEqual(resp.status_code, 201)
         data = resp.json()
         self.assertEqual(data['stock_code'], '600000')
-        self.assertEqual(len(data['records']), PART_COUNT)
+        self.assertEqual(len(data['records']), 5)
 
     def test_create_plan_too_expensive(self):
         resp = self.client.post(

@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import PlanList from './components/PlanList.vue'
 import PlanDetail from './components/PlanDetail.vue'
 import Statistics from './components/Statistics.vue'
+import StockAnalysis from './components/StockAnalysis.vue'
 import Login from './views/Login.vue'
 import Register from './views/Register.vue'
 import { isLoggedIn, isApproved } from './store/auth.js'
@@ -13,6 +14,7 @@ const routes = [
   { path: '/plans', component: PlanList },
   { path: '/plans/:id', component: PlanDetail, props: true },
   { path: '/statistics', component: Statistics },
+  { path: '/analysis', component: StockAnalysis },
 ]
 
 const router = createRouter({

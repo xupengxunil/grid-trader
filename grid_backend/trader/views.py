@@ -17,15 +17,13 @@ from .serializers import (
 )
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-PART_COUNT = 5          # number of grid parts
-PART_FUNDS = 10000.00   # funds per part (yuan)
 GRID_RATIO = Decimal('0.03')   # 3 % grid interval
 SHARES_PER_LOT = 100    # A-share: 1 lot = 100 shares
 
 
 def _compute_grid_records(plan: GridPlan) -> list[dict]:
     """
-    Generate PART_COUNT grid records from the plan's base price.
+    Generate part_count grid records from the plan's base price.
 
     Grid layout:
       Part 1 → buy at base_price,  sell at base_price * 1.03 (if ratio=0.03)
@@ -35,8 +33,12 @@ def _compute_grid_records(plan: GridPlan) -> list[dict]:
     """
     base = Decimal(str(plan.base_price))
     ratio = Decimal(str(plan.grid_ratio))
+    part_count = plan.part_count
+    total_funds = Decimal(str(plan.total_funds))
+    part_funds = total_funds / Decimal(str(part_count)) if part_count > 0 else Decimal('0')
+    
     records = []
-    for i in range(PART_COUNT):
+    for i in range(part_count):
         buy_price = base * ((1 - ratio) ** i)
         sell_price = buy_price * (1 + ratio)
 
@@ -45,7 +47,6 @@ def _compute_grid_records(plan: GridPlan) -> list[dict]:
         sell_price = sell_price.quantize(Decimal('0.001'))
 
         # Volume: floor down to whole lots
-        part_funds = Decimal(str(PART_FUNDS))
         raw_shares = math.floor(float(part_funds / buy_price) / SHARES_PER_LOT) * SHARES_PER_LOT
         if raw_shares < SHARES_PER_LOT:
             # Less than 1 lot – skip this grid level
@@ -140,10 +141,10 @@ def plan_list_create(request):
     return Response(GridPlanSerializer(plan).data, status=status.HTTP_201_CREATED)
 
 
-@api_view(['GET', 'DELETE'])
+@api_view(['GET', 'DELETE', 'PATCH'])
 @permission_classes([IsApprovedUser])
 def plan_detail(request, plan_id):
-    """Retrieve (GET) or delete (DELETE) a single plan (must belong to current user)."""
+    """Retrieve (GET), update (PATCH) or delete (DELETE) a single plan (must belong to current user)."""
     try:
         plan = GridPlan.objects.prefetch_related('records').get(
             pk=plan_id, user=request.user
@@ -154,6 +155,13 @@ def plan_detail(request, plan_id):
     if request.method == 'DELETE':
         plan.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+        
+    if request.method == 'PATCH':
+        serializer = GridPlanSerializer(plan, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     return Response(GridPlanSerializer(plan).data)
 
@@ -245,6 +253,43 @@ def record_sell(request, record_id):
     record.save()
     return Response(GridRecordSerializer(record).data)
 
+@api_view(['POST'])
+@permission_classes([IsApprovedUser])
+def record_restart(request, record_id):
+    """Restart a CLEARED record. Moves it to inactive cycle and creates a new PENDING record."""
+    try:
+        record = GridRecord.objects.select_related('plan').get(
+            pk=record_id, plan__user=request.user
+        )
+    except GridRecord.DoesNotExist:
+        return Response({'detail': '记录不存在。'}, status=status.HTTP_404_NOT_FOUND)
+
+    if record.status != GridRecord.STATUS_CLEARED:
+        return Response(
+            {'detail': f'只有已清仓的状态才可以重启。'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not record.is_active_cycle:
+        return Response(
+            {'detail': f'该档位已被重启过，请针对最新的清仓记录进行操作。'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # 1. 标记老记录不再是当前活跃循环
+    record.is_active_cycle = False
+    record.save()
+
+    # 2. 为当前档位创建一条全新的 PENDING 记录
+    new_record = GridRecord.objects.create(
+        plan=record.plan,
+        part_index=record.part_index,
+        target_buy_price=record.target_buy_price,
+        target_sell_price=record.target_sell_price,
+        volume=record.volume,
+        status=GridRecord.STATUS_PENDING,
+        is_active_cycle=True
+    )
+    return Response(GridRecordSerializer(new_record).data, status=status.HTTP_201_CREATED)
 
 # ── Statistics endpoint ────────────────────────────────────────────────────────
 
@@ -301,3 +346,119 @@ def statistics(request):
         'total_operations': agg['total_operations'] or 0,
         'breakdown': breakdown_list,
     })
+
+
+@api_view(['GET'])
+@permission_classes([IsApprovedUser])
+def stock_quotes(request):
+    """Fetch real-time stock prices from Sina API."""
+    import requests
+    codes = request.GET.get('codes', '')
+    if not codes:
+        return Response({})
+    url = f"http://hq.sinajs.cn/list={codes}"
+    headers = {"Referer": "http://finance.sina.com.cn"}
+    try:
+        r = requests.get(url, headers=headers, timeout=5)
+        r.encoding = 'gbk'
+        res = {}
+        for line in r.text.strip().split('\n'):
+            if '=' in line:
+                var_name, val_str = line.split('=', 1)
+                code = var_name.split('_')[-1]
+                parts = val_str.replace('"', '').replace(';', '').split(',')
+                if len(parts) > 3:
+                    res[code] = {
+                        "name": parts[0],
+                        "open": float(parts[1]),
+                        "close": float(parts[2]),
+                        "price": float(parts[3]),
+                        "high": float(parts[4]),
+                        "low": float(parts[5]),
+                    }
+        return Response(res)
+    except Exception as e:
+        return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET'])
+@permission_classes([IsApprovedUser])
+def stock_search(request):
+    """Search stock by Chinese name, pinyin, or code using Sina Suggest API."""
+    import requests
+    keyword = request.GET.get('keyword', '')
+    if not keyword:
+        return Response([])
+    
+    # type=11,12 表示 A股
+    url = f"http://suggest3.sinajs.cn/suggest/type=11,12&key={keyword}"
+    try:
+        r = requests.get(url, timeout=5)
+        r.encoding = 'gbk'
+        text = r.text.strip()
+        results = []
+        if '="' in text:
+            data_str = text.split('="')[1].replace('";', '')
+            if data_str:
+                items = data_str.split(';')
+                for item in items:
+                    parts = item.split(',')
+                    if len(parts) >= 5:
+                        results.append({
+                            "name": parts[4],       # 贵州茅台
+                            "code": parts[3],       # sh600519
+                            "raw_code": parts[2]    # 600519
+                        })
+        return Response(results)
+    except Exception as e:
+        return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET'])
+@permission_classes([IsApprovedUser])
+def stock_kline(request):
+    """Fetch K-Line data from Sina API."""
+    import requests
+    symbol = request.GET.get('symbol', '')
+    scale = request.GET.get('scale', '60')
+    datalen = request.GET.get('datalen', '100')
+    if not symbol:
+        return Response([])
+    url = f"http://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol={symbol}&scale={scale}&ma=no&datalen={datalen}"
+    try:
+        r = requests.get(url, timeout=5)
+        r.encoding = 'utf-8'
+        import json
+        return Response(json.loads(r.text))
+    except Exception as e:
+        return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+from .models import StockWatchlist
+from .serializers import StockWatchlistSerializer
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsApprovedUser])
+def watchlist_list_create(request):
+    if request.method == 'GET':
+        watch_qs = StockWatchlist.objects.filter(user=request.user)
+        serializer = StockWatchlistSerializer(watch_qs, many=True)
+        return Response(serializer.data)
+    elif request.method == 'POST':
+        serializer = StockWatchlistSerializer(data=request.data)
+        if serializer.is_valid():
+            # Check unique together
+            if StockWatchlist.objects.filter(user=request.user, stock_code=serializer.validated_data['stock_code']).exists():
+                return Response({'error': '股票已在自选股中'}, status=status.HTTP_400_BAD_REQUEST)
+            serializer.save(user=request.user)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['DELETE'])
+@permission_classes([IsApprovedUser])
+def watchlist_delete(request, code):
+    try:
+        watch_item = StockWatchlist.objects.get(user=request.user, stock_code=code)
+        watch_item.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    except StockWatchlist.DoesNotExist:
+        return Response(status=status.HTTP_404_NOT_FOUND)
+

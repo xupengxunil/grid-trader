@@ -23,6 +23,10 @@
           <el-icon><TrendCharts /></el-icon>
           收益统计
         </el-menu-item>
+        <el-menu-item index="/analysis">
+          <el-icon><DataLine /></el-icon>
+          网格分析
+        </el-menu-item>
       </el-menu>
 
       <!-- User info area -->

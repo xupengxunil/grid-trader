@@ -38,6 +38,7 @@ export const getPlans = () => http.get('/plans/')
 export const createPlan = (data) => http.post('/plans/', data)
 export const getPlan = (id) => http.get(`/plans/${id}/`)
 export const deletePlan = (id) => http.delete(`/plans/${id}/`)
+export const updatePlan = (id, data) => http.patch(`/plans/${id}/`, data)
 
 // ── Records ──────────────────────────────────────────────────────────────────
 export const executeBuy = (recordId, price) =>
@@ -46,7 +47,26 @@ export const executeBuy = (recordId, price) =>
 export const executeSell = (recordId, price) =>
   http.post(`/records/${recordId}/sell/`, { price })
 
+export const restartRecord = (recordId) =>
+  http.post(`/records/${recordId}/restart/`)
+
 // ── Statistics ───────────────────────────────────────────────────────────────
 export const getStatistics = (params) => http.get('/statistics/', { params })
+
+// ── Quotes ───────────────────────────────────────────────────────────────────
+export const getQuotes = (codes) => http.get('/quotes/', { params: { codes } })
+export const searchStocks = (keyword) => http.get('/search/', { params: { keyword } })
+
+// ── K-Line ───────────────────────────────────────────────────────────────────
+export const getKLine = (symbol, scale = 60, datalen = 100) => 
+  http.get('/kline/', { params: { symbol, scale, datalen } })
+
+
+
+// Watchlist
+export const getWatchlist = () => http.get('/watchlist/')
+export const addWatchlist = (data) => http.post('/watchlist/', data)
+export const deleteWatchlist = (code) => http.delete(`/watchlist/${code}/`)
+
 
 export default http

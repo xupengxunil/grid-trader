@@ -53,9 +53,11 @@ class GridPlan(models.Model):
     total_funds = models.DecimalField(
         max_digits=12, decimal_places=2, default=50000.00, verbose_name='总资金(元)'
     )
+    part_count = models.IntegerField(default=5, verbose_name='网格档数')
     grid_ratio = models.DecimalField(
         max_digits=6, decimal_places=4, default=0.03, verbose_name='网格大小'
     )
+    is_active = models.BooleanField(default=True, verbose_name='是否活跃')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
 
@@ -118,13 +120,35 @@ class GridRecord(models.Model):
     status = models.CharField(
         max_length=10, choices=STATUS_CHOICES, default=STATUS_PENDING, verbose_name='状态'
     )
+    is_active_cycle = models.BooleanField(default=True, verbose_name='当前循环')
 
     class Meta:
         db_table = 'grid_record'
         verbose_name = '网格交易记录'
         verbose_name_plural = '网格交易记录'
-        ordering = ['part_index']
-        unique_together = [('plan', 'part_index')]
+        ordering = ['part_index', '-id']
 
     def __str__(self):
         return f'{self.plan.stock_name} 第{self.part_index}档 [{self.get_status_display()}]'
+
+class StockWatchlist(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='watchlists',
+        verbose_name='所属用户'
+    )
+    stock_code = models.CharField(max_length=20, verbose_name='股票代码')
+    stock_name = models.CharField(max_length=50, verbose_name='股票名称')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='添加时间')
+
+    class Meta:
+        db_table = 'stock_watchlist'
+        verbose_name = '自选股'
+        verbose_name_plural = '自选股'
+        ordering = ['-created_at']
+        unique_together = ('user', 'stock_code')
+
+    def __str__(self):
+        return f'{self.stock_name}({self.stock_code})'
+

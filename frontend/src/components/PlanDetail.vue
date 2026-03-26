@@ -13,7 +13,11 @@
             <span class="stock-code">{{ plan.stock_code }}</span>
             <span class="stock-name">{{ plan.stock_name }}</span>
             <span class="base-price">基准价：¥{{ plan.base_price }}</span>
-            <span class="grid-ratio" style="margin-left:8px; color:#606266; font-size:14px">
+            <span v-if="currentPrice" :class="['current-price', priceChange >= 0 ? 'profit' : 'loss']" style="margin-left:16px; font-weight: bold;">
+              当前价：¥{{ currentPrice.toFixed(3) }} 
+              <span style="font-size:14px">({{ priceChange >= 0 ? '+' : '' }}{{ priceChange.toFixed(2) }}%)</span>
+            </span>
+            <span class="grid-ratio" style="margin-left:auto; color:#606266; font-size:14px">
               网格大小：{{ plan.grid_ratio ? (plan.grid_ratio * 100).toFixed(1) + '%' : '3.0%' }}
             </span>
           </div>
@@ -71,12 +75,27 @@
         </el-row>
       </el-card>
 
+      <!-- K-line Chart -->
+      <el-card style="margin-top:16px" v-loading="chartLoading">
+        <template #header>
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span>网格水位走势图</span>
+            <el-radio-group v-model="klineScale" size="small" @change="fetchAndDrawKline">
+              <el-radio-button label="15">15分钟</el-radio-button>
+              <el-radio-button label="60">60分钟</el-radio-button>
+              <el-radio-button label="240">日线</el-radio-button>
+            </el-radio-group>
+          </div>
+        </template>
+        <div ref="chartContainer" style="width: 100%; height: 400px;"></div>
+      </el-card>
+
       <!-- Grid records table -->
       <el-card style="margin-top:16px">
         <template #header>
           <span>网格档位详情</span>
         </template>
-        <el-table :data="plan.records" border stripe>
+        <el-table :data="activeRecords" border stripe>
           <el-table-column label="档位" prop="part_index" width="60" align="center" />
           <el-table-column label="计划买入价" align="right">
             <template #default="{ row }">
@@ -149,6 +168,13 @@
                 @click="openSellDialog(row)"
               >卖出</el-button>
               <span v-if="row.status === 'CLEARED'" class="cleared-label">已清仓</span>
+              <el-button
+                v-if="row.status === 'CLEARED'"
+                type="info"
+                size="small"
+                style="margin-left:8px;"
+                @click="confirmRestart(row)"
+              >重启</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -217,15 +243,157 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
-import { getPlan, executeBuy, executeSell } from '../api/index.js'
+import * as echarts from 'echarts'
+import { getPlan, executeBuy, executeSell, restartRecord, getQuotes, getKLine } from '../api/index.js'
 
 const props = defineProps({ id: { type: String, required: true } })
 
 const plan = ref(null)
 const loading = ref(false)
+const currentPrice = ref(null)
+const priceChange = ref(0)
+let quoteInterval = null
+
+const chartContainer = ref(null)
+const chartLoading = ref(false)
+const klineScale = ref('60')
+let chartInstance = null
+
+function getSinaCode(code) {
+  code = code.trim().toLowerCase();
+  if (!code) return '';
+  if (code.startsWith('sh') || code.startsWith('sz') || code.startsWith('bj')) return code;
+  if (/^6/.test(code)) return 'sh' + code;
+  if (/^0|^3/.test(code)) return 'sz' + code;
+  if (/^8|^4/.test(code)) return 'bj' + code;
+  return code;
+}
+
+async function fetchQuote() {
+  if (!plan.value?.stock_code) return
+  const sc = getSinaCode(plan.value.stock_code)
+  try {
+    const { data } = await getQuotes(sc)
+    if (data && data[sc]) {
+      currentPrice.value = data[sc].price > 0 ? data[sc].price : data[sc].close
+      priceChange.value = ((currentPrice.value - data[sc].close) / data[sc].close) * 100
+    }
+  } catch (e) {
+    // silence background quote errors
+  }
+}
+
+async function fetchAndDrawKline() {
+  if (!plan.value?.stock_code) return
+  chartLoading.value = true
+  try {
+    const sc = getSinaCode(plan.value.stock_code)
+    const { data } = await getKLine(sc, klineScale.value, 150)
+    if (data && data.length) {
+      await nextTick()
+      drawChart(data)
+    }
+  } catch (e) {
+    ElMessage.error('获取K线数据失败')
+  } finally {
+    chartLoading.value = false
+  }
+}
+
+function drawChart(klineData) {
+  if (!chartContainer.value) return
+  if (!chartInstance) {
+    chartInstance = echarts.init(chartContainer.value)
+  }
+  
+  const categoryData = klineData.map(item => item.day)
+  const values = klineData.map(item => [
+    parseFloat(item.open),
+    parseFloat(item.close),
+    parseFloat(item.low),
+    parseFloat(item.high)
+  ])
+
+  const markLineData = []
+  if (plan.value && plan.value.records) {
+    const activeR = plan.value.records.filter(r => r.is_active_cycle)
+    
+    // Create base price line
+    if (plan.value.base_price) {
+      markLineData.push({
+        yAxis: Number(plan.value.base_price),
+        name: '基准价',
+        label: { formatter: '基准: {c}', position: 'end', color: '#888' },
+        lineStyle: { color: '#888', type: 'solid', width: 2 }
+      })
+    }
+
+    activeR.forEach(r => {
+      // 待买入 (PENDING) 蓝色虚线
+      if (r.status === 'PENDING') {
+        markLineData.push({
+          yAxis: Number(r.target_buy_price),
+          name: '买' + r.part_index,
+          label: { formatter: '买' + r.part_index + ' ({c})', position: 'end', color: '#409EFF' },
+          lineStyle: { color: '#409EFF', type: 'dashed', width: 2 }
+        })
+      }
+      
+      // 持仓中 (HOLDING) 代表已经买入，需要画出它的目标卖出价，橙色实线，表示网格“拦截网”已挂靠
+      if (r.status === 'HOLDING') {
+        markLineData.push({
+          yAxis: Number(r.target_sell_price),
+          name: '卖' + r.part_index,
+          label: { formatter: '卖' + r.part_index + ' ({c})', position: 'start', color: '#E6A23C' },
+          lineStyle: { color: '#E6A23C', type: 'solid', width: 2 }
+        })
+        
+        // 也可以顺便画一条半透明的买入成本线供参考
+        markLineData.push({
+          yAxis: Number(r.actual_buy_price || r.target_buy_price),
+          name: '买入成本',
+          label: { formatter: '建仓价(第' + r.part_index + '档)', position: 'end', color: '#909399', fontSize: 10 },
+          lineStyle: { color: '#909399', type: 'dotted', width: 1, opacity: 0.6 }
+        })
+      }
+    })
+  }
+
+  const option = {
+    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+    grid: { left: '8%', right: '10%', bottom: '15%' },
+    xAxis: { type: 'category', data: categoryData, scale: true, boundaryGap: false, splitLine: { show: false } },
+    yAxis: { scale: true, splitArea: { show: true } },
+    dataZoom: [ { type: 'inside', start: 60, end: 100 }, { show: true, type: 'slider', top: '90%', start: 60, end: 100 } ],
+    series: [
+      {
+        name: 'K线',
+        type: 'candlestick',
+        data: values,
+        itemStyle: { color: '#ef232a', color0: '#14b143', borderColor: '#ef232a', borderColor0: '#14b143' },
+        markLine: {
+          symbol: ['none', 'none'],
+          data: markLineData,
+          precision: 3
+        }
+      }
+    ]
+  }
+
+  chartInstance.setOption(option)
+}
+
+function resizeChart() {
+  if (chartInstance) chartInstance.resize()
+}
+
+const activeRecords = computed(() => {
+  if (!plan.value) return []
+  return plan.value.records.filter(r => r.is_active_cycle)
+})
 
 const pendingCount = computed(() =>
   plan.value?.records.filter(r => r.status === 'PENDING').length ?? 0
@@ -261,12 +429,23 @@ async function fetchPlan() {
   try {
     const { data } = await getPlan(props.id)
     plan.value = data
+    fetchQuote()
+    fetchAndDrawKline()
+    if (!quoteInterval) {
+      quoteInterval = setInterval(fetchQuote, 120000) // 每分钟更新一次行情
+    }
   } catch {
     ElMessage.error('加载计划详情失败')
   } finally {
     loading.value = false
   }
 }
+
+onUnmounted(() => {
+  if (quoteInterval) clearInterval(quoteInterval)
+  window.removeEventListener('resize', resizeChart)
+  if (chartInstance) chartInstance.dispose()
+})
 
 function tagType(status) {
   return { PENDING: 'info', HOLDING: 'warning', CLEARED: 'success' }[status] ?? ''
@@ -337,7 +516,27 @@ async function confirmSell() {
   }
 }
 
-onMounted(fetchPlan)
+async function confirmRestart(record) {
+  try {
+    await ElMessageBox.confirm('确定要重启该网格档位吗？该档位将被归档，并生成一条新的待买入记录。', '确认重启', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+    const res = await restartRecord(record.id)
+    ElMessage.success(res.data?.message || '重启成功')
+    await fetchPlan()
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error(e.response?.data?.detail || '操作失败')
+    }
+  }
+}
+
+onMounted(() => {
+  fetchPlan()
+  window.addEventListener('resize', resizeChart)
+})
 </script>
 
 <style scoped>
