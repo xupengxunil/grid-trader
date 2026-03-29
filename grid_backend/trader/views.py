@@ -351,31 +351,52 @@ def statistics(request):
 @api_view(['GET'])
 @permission_classes([IsApprovedUser])
 def stock_quotes(request):
-    """Fetch real-time stock prices from Sina API."""
-    import requests
+    """Fetch real-time stock prices using Tushare API."""
+    import tushare as ts
+    from django.conf import settings
+    import pandas as pd
+    
     codes = request.GET.get('codes', '')
     if not codes:
         return Response({})
-    url = f"http://hq.sinajs.cn/list={codes}"
-    headers = {"Referer": "http://finance.sina.com.cn"}
+        
     try:
-        r = requests.get(url, headers=headers, timeout=5)
-        r.encoding = 'gbk'
+        # 设置 Tushare Token。请在 settings.py 中配置 TUSHARE_TOKEN
+        token = getattr(settings, 'TUSHARE_TOKEN', '')
+        if token:
+            ts.set_token(token)
+            
+        code_list = codes.split(',')
+        
+        # Tushare 的 get_realtime_quotes 支持 'sh600519,sz000001' 等格式
+        # 且在内部可以使用腾讯等其他数据源，规避新浪封禁
+        df = ts.get_realtime_quotes(code_list)
+        
+        if df is None or df.empty:
+            return Response({})
+            
         res = {}
-        for line in r.text.strip().split('\n'):
-            if '=' in line:
-                var_name, val_str = line.split('=', 1)
-                code = var_name.split('_')[-1]
-                parts = val_str.replace('"', '').replace(';', '').split(',')
-                if len(parts) > 3:
-                    res[code] = {
-                        "name": parts[0],
-                        "open": float(parts[1]),
-                        "close": float(parts[2]),
-                        "price": float(parts[3]),
-                        "high": float(parts[4]),
-                        "low": float(parts[5]),
-                    }
+        for _, row in df.iterrows():
+            raw_code = str(row['code'])
+            
+            # 还原请求中的带前缀的 code
+            original_code = None
+            for c in code_list:
+                if c.endswith(raw_code):
+                    original_code = c
+                    break
+            
+            if not original_code:
+                original_code = f"sh{raw_code}" if raw_code.startswith('6') else f"sz{raw_code}"
+                
+            res[original_code] = {
+                "name": str(row['name']),
+                "open": float(row['open']),
+                "close": float(row['pre_close']), # 昨日收盘价
+                "price": float(row['price']),     # 当前价
+                "high": float(row['high']),
+                "low": float(row['low']),
+            }
         return Response(res)
     except Exception as e:
         return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -415,19 +436,67 @@ def stock_search(request):
 @api_view(['GET'])
 @permission_classes([IsApprovedUser])
 def stock_kline(request):
-    """Fetch K-Line data from Sina API."""
-    import requests
-    symbol = request.GET.get('symbol', '')
-    scale = request.GET.get('scale', '60')
-    datalen = request.GET.get('datalen', '100')
+    """Fetch K-Line data using Tushare API."""
+    import tushare as ts
+    from django.conf import settings
+    import pandas as pd
+    
+    symbol = request.GET.get('symbol', '') # e.g., sh600519
+    # scale = request.GET.get('scale', '60') # Tushare 免费接口多为日线，这里按日线处理
+    datalen = int(request.GET.get('datalen', '100'))
+    
     if not symbol:
         return Response([])
-    url = f"http://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol={symbol}&scale={scale}&ma=no&datalen={datalen}"
+        
     try:
-        r = requests.get(url, timeout=5)
-        r.encoding = 'utf-8'
-        import json
-        return Response(json.loads(r.text))
+        # Tushare 代码格式转换：sh600519 -> 600519.SH, sz000001 -> 000001.SZ
+        ts_code = symbol
+        if symbol.lower().startswith('sh'):
+            ts_code = f"{symbol[2:]}.SH"
+        elif symbol.lower().startswith('sz'):
+            ts_code = f"{symbol[2:]}.SZ"
+            
+        # 设置 Tushare Token。请在 settings.py 中配置 TUSHARE_TOKEN
+        token = getattr(settings, 'TUSHARE_TOKEN', '')
+        if token:
+            ts.set_token(token)
+            
+        pro = ts.pro_api()
+        
+        # 判断是否为常见的指数代码 (例如上证000001.SH)
+        asset_type = 'E'
+        if ts_code in ['000001.SH', '399001.SZ', '399006.SZ', '000300.SH', '000016.SH']:
+            asset_type = 'I'
+            
+        # 获取日线级别前复权数据（此处使用通用行情接口，需根据权限支持调整）
+        df = ts.pro_bar(ts_code=ts_code, asset=asset_type, adj='qfq', start_date='', end_date='')
+        
+        if df is None or df.empty:
+            return Response([])
+            
+        # 取最近的一段数据
+        df = df.head(datalen)
+        
+        # 转换为前端/图表库（或者是以前的新浪数据）兼容的格式
+        data = []
+        for _, row in df.iterrows():
+            # Tushare 的 trade_date 格式为 'YYYYMMDD'
+            date_str = str(row['trade_date'])
+            formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
+            
+            data.append({
+                "day": formatted_date,
+                "open": str(row['open']),
+                "high": str(row['high']),
+                "low": str(row['low']),
+                "close": str(row['close']),
+                "volume": str(row['vol'])
+            })
+            
+        # Tushare 返回的数据是倒序（最新的在前），反转数组以便于图表按顺序绘制
+        data.reverse()
+        
+        return Response(data)
     except Exception as e:
         return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
