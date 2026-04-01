@@ -179,6 +179,47 @@
           </el-table-column>
         </el-table>
       </el-card>
+
+      <!-- Transaction History Card -->
+      <el-card style="margin-top:16px; margin-bottom: 20px;">
+        <template #header>
+          <span>交易历史记录</span>
+        </template>
+        <el-table :data="tradeHistory" border stripe style="width: 100%" max-height="500">
+          <el-table-column label="时间" align="center" width="160">
+            <template #default="{ row }">
+              {{ formatTime(row.time) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" align="center" width="80">
+            <template #default="{ row }">
+              <el-tag :type="row.type === '买入' ? 'primary' : 'warning'" size="small">
+                {{ row.type }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="档位" prop="part_index" align="center" width="80" />
+          <el-table-column label="成交价" align="right">
+            <template #default="{ row }">
+              ¥{{ row.price }}
+            </template>
+          </el-table-column>
+          <el-table-column label="数量(股)" prop="volume" align="right" />
+          <el-table-column label="成交金额" align="right">
+            <template #default="{ row }">
+              ¥{{ row.amount }}
+            </template>
+          </el-table-column>
+          <el-table-column label="收益" align="right">
+            <template #default="{ row }">
+              <span v-if="row.profit !== null" :class="row.profit >= 0 ? 'profit' : 'loss'">
+                {{ row.profit >= 0 ? '+' : '' }}{{ row.profit }}
+              </span>
+              <span v-else>-</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-card>
     </template>
 
     <!-- Buy dialog -->
@@ -255,7 +296,6 @@ const plan = ref(null)
 const loading = ref(false)
 const currentPrice = ref(null)
 const priceChange = ref(0)
-let quoteInterval = null
 
 const chartContainer = ref(null)
 const chartLoading = ref(false)
@@ -424,6 +464,39 @@ const realizedProfit = computed(() => {
 
 const netProfit = computed(() => realizedProfit.value - totalFee.value)
 
+const tradeHistory = computed(() => {
+  if (!plan.value || !plan.value.records) return []
+  const history = []
+  plan.value.records.forEach(r => {
+    if (r.buy_time) {
+      history.push({
+        id: r.id + '_buy',
+        type: '买入',
+        part_index: r.part_index,
+        price: r.actual_buy_price,
+        volume: r.volume,
+        amount: r.buy_amount,
+        time: r.buy_time,
+        profit: null
+      })
+    }
+    if (r.sell_time && r.status === 'CLEARED') {
+      history.push({
+        id: r.id + '_sell',
+        type: '卖出',
+        part_index: r.part_index,
+        price: r.actual_sell_price,
+        volume: r.volume,
+        amount: r.sell_amount,
+        time: r.sell_time,
+        profit: r.profit
+      })
+    }
+  })
+  history.sort((a, b) => new Date(b.time) - new Date(a.time))
+  return history
+})
+
 async function fetchPlan() {
   loading.value = true
   try {
@@ -431,9 +504,6 @@ async function fetchPlan() {
     plan.value = data
     fetchQuote()
     fetchAndDrawKline()
-    if (!quoteInterval) {
-      quoteInterval = setInterval(fetchQuote, 120000) // 每分钟更新一次行情
-    }
   } catch {
     ElMessage.error('加载计划详情失败')
   } finally {
@@ -442,7 +512,6 @@ async function fetchPlan() {
 }
 
 onUnmounted(() => {
-  if (quoteInterval) clearInterval(quoteInterval)
   window.removeEventListener('resize', resizeChart)
   if (chartInstance) chartInstance.dispose()
 })

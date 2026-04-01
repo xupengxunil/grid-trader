@@ -8,6 +8,52 @@
       </el-button>
     </div>
 
+    <!-- Recommended Watchlist Cards -->
+    <el-card class="recommend-card" shadow="hover" style="margin-bottom: 20px;">
+      <template #header>
+        <div style="font-weight: 600; display: flex; align-items: center; justify-content: space-between;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <el-icon color="#e6a23c"><Star /></el-icon>
+            <span>自选股智能发掘: 网格建仓形态</span>
+            <el-tooltip content="点击按钮扫描您的自选股，发掘具备良好网格建仓形态的标的。" placement="right">
+              <el-icon size="14" color="#909399"><InfoFilled /></el-icon>
+            </el-tooltip>
+          </div>
+          <el-button v-if="!hasScanned && !loadingWatchlist" type="primary" size="small" plain @click="fetchRecommendedWatchlist">扫描自选股</el-button>
+          <el-button v-else-if="loadingWatchlist" type="primary" size="small" plain loading>扫描中...</el-button>
+          <el-button v-else type="primary" size="small" plain @click="fetchRecommendedWatchlist">重新扫描</el-button>
+        </div>
+      </template>
+      
+      <div v-if="loadingWatchlist" v-loading="loadingWatchlist" element-loading-text="正在分析自选股形态..." style="height: 40px; border-radius: 4px;"></div>
+      
+      <div v-else-if="!hasScanned" style="color: #909399; font-size: 14px; text-align: center; padding: 10px 0;">
+        点击右上角按钮开始分析自选股
+      </div>
+
+      <div v-else-if="hasScanned && recommendedWatchlist.length === 0" style="color: #909399; font-size: 14px; text-align: center; padding: 10px 0;">
+        暂未发现具备典型网格建仓形态的自选股。
+      </div>
+
+      <div v-else class="recommend-tags">
+        <el-tag
+          v-for="item in recommendedWatchlist"
+          :key="item.stock_code"
+          type="success"
+          effect="light"
+          round
+          style="margin-right: 12px; margin-bottom: 8px; cursor: pointer; padding: 4px 12px; height: auto;"
+          @click="jumpToAnalysis(item.stock_code)"
+        >
+          <div style="display: flex; align-items: center; gap: 4px;">
+            <span style="font-size: 14px; font-weight: 600;">{{ item.stock_name }}</span>
+            <span style="font-size: 12px; color: #909399;">{{ item.stock_code }}</span>
+            <el-icon style="margin-left: 4px;"><Promotion /></el-icon>
+          </div>
+        </el-tag>
+      </div>
+    </el-card>
+
     <!-- Tabs -->
     <el-tabs v-model="activeTab" class="plan-tabs">
       <el-tab-pane label="活跃计划" name="active" />
@@ -243,12 +289,14 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Delete, Warning, Box, CopyDocument } from '@element-plus/icons-vue'
-import { getPlans, createPlan, deletePlan, updatePlan, getQuotes, getKLine, searchStocks } from '../api/index.js'
+import { Plus, Delete, Warning, Box, CopyDocument, Star, InfoFilled, Promotion } from '@element-plus/icons-vue'
+import { getPlans, createPlan, deletePlan, updatePlan, getQuotes, getKLine, searchStocks, getWatchlist } from '../api/index.js'
+import { analyzeStockSuitability } from '../utils/indicators.js'
 
 const router = useRouter()
+const route = useRoute()
 const plans = ref([])
 const loading = ref(false)
 const showCreateDialog = ref(false)
@@ -679,7 +727,75 @@ function formatDate(dateStr) {
   return new Date(dateStr).toLocaleDateString('zh-CN')
 }
 
-onMounted(fetchPlans)
+const recommendedWatchlist = ref([])
+const loadingWatchlist = ref(false)
+const hasScanned = ref(false)
+
+async function fetchRecommendedWatchlist() {
+  loadingWatchlist.value = true
+  hasScanned.value = true
+  try {
+    const res = await getWatchlist()
+    const watchlistStr = res.data || []
+    const recommended = []
+    
+    // Process items sequentially to avoid slamming the API too hard
+    for (const item of watchlistStr) {
+      if (!item.stock_code) continue
+      try {
+        const klineRes = await getKLine(item.stock_code, 240, 100)
+        if (klineRes.data && klineRes.data.length > 0) {
+          const isSuitable = analyzeStockSuitability(klineRes.data)
+          if (isSuitable) {
+            recommended.push({
+              stock_code: item.stock_code,
+              stock_name: item.stock_name
+            })
+          }
+        }
+      } catch (e) {
+        console.error(`Failed to analyze ${item.stock_code}`, e)
+      }
+    }
+    recommendedWatchlist.value = recommended
+    localStorage.setItem('grid_recommended_watchlist', JSON.stringify(recommended))
+  } catch (e) {
+    console.error('Failed to fetch watchlist', e)
+  } finally {
+    loadingWatchlist.value = false
+  }
+}
+
+function jumpToAnalysis(code) {
+  router.push(`/analysis?code=${code}`)
+}
+
+onMounted(() => {
+  fetchPlans()
+
+  // 尝试从本地缓存中加载已扫描的推荐自选股
+  const cachedWatchlist = localStorage.getItem('grid_recommended_watchlist')
+  if (cachedWatchlist) {
+    try {
+      recommendedWatchlist.value = JSON.parse(cachedWatchlist)
+      hasScanned.value = true
+    } catch (e) {
+      console.error('Failed to parse cached watchlist', e)
+    }
+  }
+
+  if (route.query.action === 'create') {
+    showCreateDialog.value = true
+    setTimeout(() => {
+      form.value.stock_code = route.query.code || ''
+      form.value.stock_name = route.query.name || ''
+      if (route.query.basePrice) form.value.base_price = parseFloat(route.query.basePrice)
+      if (route.query.ratio) ratioPercent.value = parseFloat(route.query.ratio)
+      if (route.query.parts) form.value.part_count = parseInt(route.query.parts)
+    }, 100)
+    router.replace('/plans')
+  }
+})
 </script>
 
 <style scoped>

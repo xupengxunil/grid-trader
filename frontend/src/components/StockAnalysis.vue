@@ -183,12 +183,45 @@
         </el-alert>
       </el-card>
 
+      <!-- Multi-dimension Entry Recommend Card -->
+      <el-row v-if="entryRecommendations.length > 0" :gutter="16" style="margin-top: 16px;">
+        <el-col :span="24">
+          <el-card shadow="hover" style="border-radius: 8px;">
+            <template #header>
+              <div style="display: flex; align-items: center; gap: 8px; font-weight: 600;">
+                <el-icon color="#409eff"><Location /></el-icon>
+                <span>多维度建仓点位建议 (参考基准价)</span>
+              </div>
+            </template>
+            <el-row :gutter="16">
+              <el-col :xs="24" :sm="8" v-for="(rec, index) in entryRecommendations" :key="index" style="margin-bottom: 12px;">
+                <div class="stat-box" :style="{ borderTop: '4px solid ' + (rec.type === 'warning' ? '#E6A23C' : rec.type === 'primary' ? '#409EFF' : '#14b143'), height: '100%', boxSizing: 'border-box', cursor: 'pointer' }" @click="applyBasePrice(rec.price)">
+                  <div style="font-weight: bold; margin-bottom: 8px; color: #303133; font-size: 15px;">{{ rec.name }}</div>
+                  <div style="font-size: 24px; font-weight: bold; margin-bottom: 8px;" :style="{ color: rec.type === 'warning' ? '#E6A23C' : rec.type === 'primary' ? '#409EFF' : '#14b143' }">
+                    ¥{{ rec.price }}
+                  </div>
+                  <div style="font-size: 12px; color: #909399; line-height: 1.5; text-align: justify;">
+                    {{ rec.reason }}
+                  </div>
+                  <div style="margin-top: 8px; text-align: right;">
+                    <el-button size="small" type="primary" link>应用为基准价 →</el-button>
+                  </div>
+                </div>
+              </el-col>
+            </el-row>
+          </el-card>
+        </el-col>
+      </el-row>
+
       <el-row :gutter="16" style="margin-top: 16px;">
         <el-col :md="8" :sm="24">
           <el-card class="recommendation-card" shadow="hover">
             <template #header>
-              <div style="font-weight: bold;">
-                <el-icon style="margin-right: 4px; vertical-align: middle;"><Lightning /></el-icon>网格参数推荐
+              <div style="font-weight: bold; display: flex; justify-content: space-between; align-items: center;">
+                <span><el-icon style="margin-right: 4px; vertical-align: middle;"><Lightning /></el-icon>网格参数推荐</span>
+                <el-button type="primary" size="small" @click="createPlanFromAnalysis">
+                  <el-icon style="margin-right: 4px;"><Plus /></el-icon>按此推荐创建计划
+                </el-button>
               </div>
             </template>
             <div v-if="strategyOptions.length > 0" style="margin-bottom: 15px;">
@@ -215,6 +248,10 @@
               <el-form-item label="自定义建仓价">
                 <el-input-number v-model="recommendBasePrice" :step="0.1" :min="0.001" style="width: 130px; margin-right:8px" @change="recalcDraw" />
                 <span style="color: #909399;">(默认MA30或现价)</span>
+              </el-form-item>
+              <el-form-item label="对应首档卖出价">
+                <span style="font-weight: bold; color: #F56C6C; font-size: 14px;">¥{{ (recommendBasePrice * (1 + editRatio / 100)).toFixed(3) }}</span>
+                <span style="color: #909399; margin-left: 6px;">(基于 {{ editRatio }}% 的网格回升卖出)</span>
               </el-form-item>
               
               <el-divider style="margin: 8px 0; border-style: dashed;" />
@@ -263,41 +300,100 @@
           <!-- History Backtest Section -->
           <el-card shadow="hover" style="margin-top: 16px;" v-if="backtestResult">
             <template #header>
-              <div style="font-weight: bold;">
-                <el-icon style="margin-right: 4px; vertical-align: middle;"><DataLine /></el-icon>历史回测 (近{{ backtestResult.days }}交易日 - 当前策略：{{ currentStrategyType }})
+              <div style="font-weight: bold; display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                  <el-icon style="margin-right: 4px; vertical-align: middle;"><DataLine /></el-icon>历史回测 (近{{ backtestResult.days }}交易日 - 当前策略：{{ currentStrategyType }})
+                </div>
+                <div style="font-weight: normal; font-size: 13px;">
+                  回测天数:
+                  <el-select v-model="backtestDays" size="small" style="width: 100px; margin-left: 8px;" @change="recalcDraw">
+                    <el-option label="30日" :value="30" />
+                    <el-option label="60日" :value="60" />
+                    <el-option label="100日" :value="100" />
+                    <el-option label="120日" :value="120" />
+                  </el-select>
+                </div>
               </div>
             </template>
             <div style="font-size: 13px; color: #909399; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #ebeef5;">
-              参数摘要：基于100日前MA30建仓价 {{ backtestResult.basePrice }}，网格 {{ editRatio }}%，总共 {{ editParts }} 档底线防守。
+              参数摘要：建仓基准价 ¥{{ backtestResult.basePrice }}，网格 {{ editRatio }}%，总共 {{ editParts }} 档底线防守。
             </div>
-            <el-row :gutter="10">
-              <el-col :span="12" style="margin-bottom:8px;">
-                <div style="font-size:12px; color:#909399;">总买入次数</div>
-                <div style="font-weight:bold; color:#409EFF;">{{ backtestResult.buyCount }} 次</div>
+
+            <!-- Holding & Floating PnL Block -->
+            <div style="background: #f8f9fa; padding: 12px; border-radius: 6px; margin-bottom: 16px;">
+              <el-row :gutter="10">
+                <el-col :span="12">
+                  <div style="font-size: 12px; color: #909399;">当前未结套牢档数</div>
+                  <div style="margin-top: 4px;">
+                    <span style="font-weight: bold; font-size: 18px;" :style="{color: backtestResult.holdingCount > 0 ? '#E6A23C' : '#67C23A'}">{{ backtestResult.holdingCount }}</span>
+                    <span style="font-size: 12px; color: #909399;"> / {{ backtestResult.parts }} 档</span>
+                  </div>
+                </el-col>
+                <el-col :span="12">
+                  <div style="font-size: 12px; color: #909399;">当前未结浮亏/浮盈</div>
+                  <div style="margin-top: 4px; font-weight: bold; font-size: 18px;" :class="backtestResult.floatingPnL >= 0 ? 'profit' : 'loss'">
+                    {{ backtestResult.floatingPnL >= 0 ? '+' : '' }}{{ backtestResult.floatingPnL }}
+                  </div>
+                </el-col>
+              </el-row>
+            </div>
+
+            <!-- Efficiency & Time Block -->
+            <div style="margin-bottom: 16px;">
+              <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                <div style="font-size: 12px; color: #909399;">成功解套闭环率 (卖出/买入次数)</div>
+                <div style="font-size: 12px; font-weight: bold; color: #409EFF;">{{ backtestResult.sellCount }} / {{ backtestResult.buyCount }} ({{ backtestResult.closedLoopRate }}%)</div>
+              </div>
+              <el-progress :percentage="Number(backtestResult.closedLoopRate)" :color="Number(backtestResult.closedLoopRate) >= 80 ? '#67C23A' : '#409EFF'" :stroke-width="8" :show-text="false" />
+              
+              <div style="display: flex; justify-content: space-between; margin-top: 10px; margin-bottom: 4px;">
+                <div style="font-size: 12px; color: #909399;">防守资金占用率 (最大/总准备金)</div>
+                <div style="font-size: 12px; font-weight: bold; color: #E6A23C;">¥{{ backtestResult.maxOccupiedCapital }} / ¥{{ backtestResult.totalPotentialCapital }}</div>
+              </div>
+              <el-progress :percentage="Number(backtestResult.capitalUtilization)" color="#E6A23C" :stroke-width="8" :show-text="false" />
+            </div>
+
+            <!-- Absolute Profits Block -->
+            <el-row :gutter="10" style="border-top: 1px dashed #ebeef5; padding-top: 12px;">
+              <el-col :span="8" style="margin-bottom:8px;">
+                <div style="font-size:12px; color:#909399;">平均持仓周期</div>
+                <div style="font-weight:bold; font-size: 15px;">{{ backtestResult.avgHoldingDays }}天</div>
               </el-col>
-              <el-col :span="12" style="margin-bottom:8px;">
-                <div style="font-size:12px; color:#909399;">总卖出 (套利) 次数</div>
-                <div style="font-weight:bold; color:#67C23A;">{{ backtestResult.sellCount }} 次</div>
+              <el-col :span="8" style="margin-bottom:8px;">
+                <div style="font-size:12px; color:#909399;">累计套利收益</div>
+                <div style="font-weight:bold; font-size: 15px; color:#F56C6C;">¥{{ backtestResult.totalProfit }}</div>
               </el-col>
-              <el-col :span="12" style="margin-bottom:8px;">
-                <div style="font-size:12px; color:#909399;">累计套利收益 (单网1手)</div>
-                <div style="font-weight:bold; color:#F56C6C;">¥{{ backtestResult.totalProfit }}</div>
+              <el-col :span="8" style="margin-bottom:8px;">
+                <div style="font-size:12px; color:#909399;">回测年化收益</div>
+                <div style="font-weight:bold; font-size: 15px; color:#F56C6C;">{{ backtestResult.annualizedYield }}%</div>
               </el-col>
-              <el-col :span="12" style="margin-bottom:8px;">
-                <div style="font-size:12px; color:#909399;">平均单次套利</div>
-                <div style="font-weight:bold;">¥{{ backtestResult.avgProfit }}</div>
-              </el-col>
-              <el-col :span="12" style="margin-bottom:8px;">
-                <div style="font-size:12px; color:#909399;">最大资金占用</div>
-                <div style="font-weight:bold;">¥{{ backtestResult.maxOccupiedCapital }}</div>
-              </el-col>
-              <el-col :span="12" style="margin-bottom:8px;">
-                <div style="font-size:12px; color:#909399;">回测收益率 (相对于占用资金)</div>
-                <div style="font-weight:bold; color:#F56C6C;">{{ backtestResult.yieldRate }}%</div>
+              
+              <el-col :span="24" style="margin-top: 4px;">
+                <el-alert
+                  :type="backtestResult.totalNetProfit >= 0 ? 'success' : 'error'"
+                  :closable="false"
+                  style="padding: 6px 12px; margin-bottom: 12px;"
+                >
+                  <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                    <strong>综合净资产变化 (结账+浮动)</strong>
+                    <span style="font-size: 16px; font-weight: bold;">{{ backtestResult.totalNetProfit >= 0 ? '+' : '' }}{{ backtestResult.totalNetProfit }}</span>
+                  </div>
+                </el-alert>
+                <el-alert
+                  v-if="backtestResult.advice"
+                  :title="'📊 策略回测诊断：'"
+                  :description="backtestResult.advice"
+                  :type="backtestResult.adviceType"
+                  show-icon
+                  :closable="false"
+                  style="font-weight: bold;"
+                />
               </el-col>
             </el-row>
-            <div style="font-size:12px; color:#E6A23C; margin-top:8px;">
-              * 模拟结果基于所选历史K线日内的最高价和最低价触发，按每档买入/卖出固定100股计算。忽略手续费及滑点，结果仅供参考。
+            
+            <div style="font-size:11px; color:#909399; margin-top:12px; line-height: 1.4;">
+              * 按单档1手(100股)进行日内极值触网模拟，忽略滑点费率。<br/>
+              * 年化收益以最大实际动用的防守资金为本金计算。
             </div>
           </el-card>
 
@@ -313,18 +409,60 @@
             </template>
             <div ref="chartContainer" style="width: 100%; height: 440px;"></div>
           </el-card>
-        </el-col>
-      </el-row>
-    </template>
+
+          <!-- Trade History Card -->
+          <el-card shadow="hover" style="margin-top: 16px;" v-if="backtestResult && backtestResult.trades.length > 0">
+            <template #header>
+              <div style="font-weight: bold; display: flex; align-items: center;">
+                <el-icon style="margin-right: 4px;"><DataLine /></el-icon>网格交易明细
+              </div>
+            </template>
+            <el-table :data="backtestResult.trades" style="width: 100%" size="small" max-height="360" stripe>
+                <el-table-column prop="buyDate" label="买入日期" width="110" />
+                <el-table-column label="买入价">
+                  <template #default="scope">
+                    <span style="color: #409EFF;">¥{{ scope.row.buyPrice.toFixed(3) }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="sellDate" label="卖出日期" width="110">
+                  <template #default="scope">
+                    <span>{{ scope.row.sellDate || '-' }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="卖出价">
+                  <template #default="scope">
+                    <span v-if="scope.row.sellPrice" style="color: #F56C6C;">¥{{ scope.row.sellPrice.toFixed(3) }}</span>
+                    <span v-else style="color: #909399;">-</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="持仓状态" width="160">
+                  <template #default="scope">
+                    <div v-if="scope.row.sellPrice">
+                      <el-tag type="success" size="small" effect="plain">已平仓</el-tag>
+                      <el-tag v-if="scope.row.cleared" type="success" size="small" effect="dark" style="margin-left: 4px;">全网清仓</el-tag>
+                    </div>
+                    <el-tag v-else type="warning" size="small" effect="plain">仍在运行</el-tag>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-card>
+
+          </el-col>
+        </el-row>
+      </template>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onMounted } from 'vue'
-import { InfoFilled, Lightning, Star, Plus, DataLine } from '@element-plus/icons-vue'
+import { ref, computed, nextTick, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { InfoFilled, Lightning, Star, Plus, DataLine, Location } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import { getQuotes, getKLine, getWatchlist, addWatchlist, deleteWatchlist, searchStocks } from '../api/index.js'
+
+const route = useRoute()
+const router = useRouter()
 
 const stockCodeInput = ref('')
 const sinaCode = ref('')
@@ -405,6 +543,17 @@ async function loadMarketData() {
 onMounted(() => {
   loadWatchlist()
   loadMarketData()
+  if (route.query.code) {
+    stockCodeInput.value = route.query.code
+    handleSearch()
+  }
+})
+
+watch(() => route.query.code, (newCode) => {
+  if (newCode) {
+    stockCodeInput.value = newCode
+    handleSearch()
+  }
 })
 
 const isInWatchlist = computed(() => {
@@ -458,11 +607,13 @@ function selectWatchlist(code) {
 
 // Analysed Data
 const recommendBasePrice = ref(0)
+const backtestDays = ref(30)
 const max100Data = ref(0)
 const min100Data = ref(0)
 const atrValue = ref(0)
 const editRatio = ref(3.0)
 const editParts = ref(5)
+const entryRecommendations = ref([])
 
 // Grid Suitability Data
 const suitabilityConditions = ref([])
@@ -515,6 +666,15 @@ function applyStrategy(opt) {
   recalcDraw()
 }
 
+function applyBasePrice(priceStr) {
+  const parsed = parseFloat(priceStr)
+  if (!isNaN(parsed) && parsed > 0) {
+    recommendBasePrice.value = parsed
+    ElMessage.success(`已应用 ${priceStr} 作为建仓基准价`)
+    recalcDraw()
+  }
+}
+
 function handleManualChange() {
   currentStrategyType.value = '自定义'
   recalcDraw()
@@ -539,8 +699,10 @@ const backtestResult = computed(() => {
   let backtestPeriod = klineList.value
   let basePrice = recommendBasePrice.value
 
+  const days = backtestDays.value
+  
   if (klineList.value.length > 30) {
-    const splitIndex = Math.max(0, klineList.value.length - 100)
+    const splitIndex = Math.max(0, klineList.value.length - days)
     const priorDays = klineList.value.slice(Math.max(0, splitIndex - 30), splitIndex)
     backtestPeriod = klineList.value.slice(splitIndex)
     
@@ -559,26 +721,47 @@ const backtestResult = computed(() => {
 
   let buyCount = 0
   let sellCount = 0
+  let holdingCount = 0
   let totalProfit = 0
-  let occupiedCapital = 0
+  let floatingPnL = 0
+  let totalNetProfit = 0
+let occupiedCapital = 0
   let maxOccupiedCapital = 0
+
   let gridStatus = new Array(parts).fill(false) // false means not bought
+  let buyDays = new Array(parts).fill(0) // tracking day index of buy
+  let totalHoldingDays = 0 // sum of holding days for closed trades
+  let openTrades = new Array(parts).fill(null)
   let trades = []
 
   const tradeUnit = 100
+  // Calculate max potential capital if all parts trigger
+  const totalPotentialCapital = gridPrices.reduce((sum, price) => sum + price * tradeUnit, 0)
 
-  for (let day of backtestPeriod) {
+  for (let dayIndex = 0; dayIndex < backtestPeriod.length; dayIndex++) {
+    let day = backtestPeriod[dayIndex]
     const low = parseFloat(day.low)
     const high = parseFloat(day.high)
-    
+    const dateStr = day.day
+
     // Check for down/buy execution
     for (let i = 0; i < parts; i++) {
       if (!gridStatus[i] && low <= gridPrices[i]) {
         gridStatus[i] = true
+        buyDays[i] = dayIndex
         buyCount++
         occupiedCapital += gridPrices[i] * tradeUnit
         maxOccupiedCapital = Math.max(maxOccupiedCapital, occupiedCapital)
-        trades.push({ date: day.day, price: gridPrices[i], type: 'buy' })
+        
+        let tradeRec = {
+          buyDate: dateStr,
+          buyPrice: gridPrices[i],
+          sellDate: null,
+          sellPrice: null,
+          cleared: false
+        }
+        openTrades[i] = tradeRec
+        trades.push(tradeRec)
       }
     }
     
@@ -589,24 +772,84 @@ const backtestResult = computed(() => {
         sellCount++
         totalProfit += gridPrices[i] * ratio * tradeUnit
         occupiedCapital -= gridPrices[i] * tradeUnit
-        trades.push({ date: day.day, price: gridPrices[i] * (1 + ratio), type: 'sell' })
+        const isCleared = gridStatus.every(s => !s)
+        
+        if (openTrades[i]) {
+          openTrades[i].sellDate = dateStr
+          openTrades[i].sellPrice = gridPrices[i] * (1 + ratio)
+          openTrades[i].cleared = isCleared
+          openTrades[i] = null
+        }
+        
+        totalHoldingDays += (dayIndex - buyDays[i])
       }
     }
   }
 
+  const currentEndPx = parseFloat(backtestPeriod[backtestPeriod.length - 1].close)
+  for (let i = 0; i < parts; i++) {
+    if (gridStatus[i]) {
+      holdingCount++
+      floatingPnL += (currentEndPx - gridPrices[i]) * tradeUnit
+    }
+  }
+
+  totalNetProfit = totalProfit + floatingPnL
+
+  const avgHoldingDays = sellCount > 0 ? (totalHoldingDays / sellCount) : 0
   const avgProfit = sellCount > 0 ? (totalProfit / sellCount) : 0
+  const closedLoopRate = buyCount > 0 ? (sellCount / buyCount) * 100 : 0
+  const capitalUtilization = totalPotentialCapital > 0 ? (maxOccupiedCapital / totalPotentialCapital) * 100 : 0
+  const annualizedYield = maxOccupiedCapital > 0 ? (totalProfit / maxOccupiedCapital) * (365 / backtestPeriod.length) * 100 : 0
   const yieldRate = maxOccupiedCapital > 0 ? (totalProfit / maxOccupiedCapital * 100) : 0
+
+  let advice = ''
+  let adviceType = 'info'
+
+  if (buyCount === 0) {
+    advice = '在整个回测区间内未能触发任何买入。建议上调建仓基准价，或缩小网格大小，否则资金将完全闲置。'
+    adviceType = 'warning'
+  } else if (holdingCount === parts && parts > 0) {
+    advice = '警告：当前网格在此参数下已被近期低点彻底击穿（全仓套牢）。建议大幅拉大网格间距，或通过增加网格档数降低兜底价。'
+    adviceType = 'error'
+  } else if (capitalUtilization < 25 && sellCount > 0) {
+    advice = '资金利用率偏低（大量资金长期闲置站岗）。说明这套网格价格布得过宽预留过深，建议适当缩小网格或减少底下防守档数。'
+    adviceType = 'warning'
+  } else if (closedLoopRate < 40 && holdingCount > 0) {
+    advice = '解套闭环率低（震荡偏弱跌或单边阴跌）。平均持仓周期可能偏长，建议审视该标的是否已转空入下降通道。'
+    adviceType = 'warning'
+  } else if (annualizedYield > 15 && closedLoopRate > 60) {
+    advice = '策略运行非常健康！年化收益和高抛低吸流转率优秀，该标的展现出了极佳的箱体震荡回测属性，推荐直接使用此参数。'
+    adviceType = 'success'
+  } else if (totalNetProfit < 0) {
+    advice = '当前呈现综合亏损（大多属于网格左侧建仓期的尚未反弹的浮亏）。属于网格交易正常阶段，请确保总防守资金充裕以耐心等待回归。'
+    adviceType = 'info'
+  } else {
+    advice = '策略历史运行表现平稳。可根据个人对资金利用率和预期收益的偏好微调参数：缩小网格间距高频套小利，放宽间距防深跌。'
+    adviceType = 'info'
+  }
 
   return {
     buyCount,
     sellCount,
+    holdingCount,
+    parts,
     totalProfit: totalProfit.toFixed(2),
-    avgProfit: avgProfit.toFixed(2),
+    floatingPnL: floatingPnL.toFixed(2),
+    totalNetProfit: totalNetProfit.toFixed(2),
+    avgHoldingDays: avgHoldingDays.toFixed(1),
+    closedLoopRate: closedLoopRate.toFixed(1),
+    capitalUtilization: capitalUtilization.toFixed(1),
     maxOccupiedCapital: maxOccupiedCapital.toFixed(2),
+    totalPotentialCapital: totalPotentialCapital.toFixed(2),
+    annualizedYield: annualizedYield.toFixed(2),
+    avgProfit: avgProfit.toFixed(2),
     yieldRate: yieldRate.toFixed(2),
     days: backtestPeriod.length,
     basePrice: basePrice.toFixed(3),
-    trades
+    trades,
+    advice,
+    adviceType
   }
 })
 
@@ -947,6 +1190,30 @@ function analyzeData(kData, marketMult) {
     currentOperationAdvice.value = actionTip;
     currentOperationType.value = actionType;
 
+    // Entry Recommendations Generation
+    const recs = [];
+    recs.push({
+      name: '激进型买点 (短期回调)',
+      price: ma10.toFixed(3),
+      type: 'warning',
+      reason: '依托MA10(10日均线)形成的短期支撑。适合多头上攻途中首次回调的试探买入，若有效跌破需警惕短期走弱。'
+    });
+    recs.push({
+      name: '稳健型买点 (中期生命线)',
+      price: ma30.toFixed(3),
+      type: 'primary',
+      reason: '依托MA30(30日均线)的核心支撑。这是主力中期持仓成本区，以此定为网格基准价胜率高、回撤可控。'
+    });
+    const defPx = dnStr !== '-' ? parseFloat(dnStr) : lowest30;
+    const finalDefPx = Math.min(defPx, lowest30);
+    recs.push({
+      name: '极度防守买点 (左侧极端位)',
+      price: finalDefPx.toFixed(3),
+      type: 'success',
+      reason: '结合布林带下轨与近月极弱前低点。极端情绪宣泄后的超跌建仓区域，安全边际高，建议不突破右侧只做低挂单。'
+    });
+    entryRecommendations.value = recs;
+
     // 基于最高/最低真实落差的网格大小计算法
     const rangeAmplitude = ((highest30 - lowest30) / highest30) * 100;
     const dailyVol = (atr / currentPx) * 100;
@@ -1051,6 +1318,15 @@ function drawChart() {
 
   const markLineData = []
   
+  // First Sell line
+  const r = editRatio.value / 100
+  markLineData.push({
+    yAxis: recommendBasePrice.value * (1 + r),
+    name: '首档卖出价',
+    label: { formatter: '首档卖出: {c}', position: 'end', color: '#E6A23C', fontSize: 10 },
+    lineStyle: { color: '#E6A23C', type: 'solid', width: 2 }
+  })
+
   // Base line
   markLineData.push({
     yAxis: recommendBasePrice.value,
@@ -1064,14 +1340,13 @@ function drawChart() {
     markLineData.push({
       yAxis: backtestResult.value.basePrice,
       name: '回测基准价',
-      label: { formatter: '回测基准: {c}', position: 'insideStartBottom', color: '#E6A23C' },
-      lineStyle: { color: '#E6A23C', type: 'dashed', width: 1.5, opacity: 0.8 }
+      label: { formatter: '回测基准: {c}', position: 'insideStartBottom', color: '#909399' },
+      lineStyle: { color: '#909399', type: 'dashed', width: 1.5, opacity: 0.8 }
     })
   }
 
   // Grid lines
   let p = recommendBasePrice.value
-  const r = editRatio.value / 100
   for (let i = 1; i <= editParts.value; i++) {
     p = p * (1 - r)
     markLineData.push({
@@ -1082,22 +1357,24 @@ function drawChart() {
     })
   }
 
-  const markPointData = []
+  const markPointData = [
+    { type: 'max', name: '当前显示最高价', valueDim: 'highest', itemStyle: { color: '#F56C6C' }, symbolSize: [70, 45] },
+    { type: 'min', name: '当前显示最低价', valueDim: 'lowest', itemStyle: { color: '#14b143' }, symbolRotate: 180, label: { offset: [0, 10] }, symbolSize: [70, 45] }
+  ]
   if (backtestResult.value?.trades) {
     for (let t of backtestResult.value.trades) {
-      if (t.type === 'buy') {
-        markPointData.push({
-          name: '买入',
-          coord: [t.date, t.price],
-          value: '买',
-          itemStyle: { color: '#409EFF' }
-        })
-      } else if (t.type === 'sell') {
-        markPointData.push({
-          name: '卖出',
-          coord: [t.date, t.price],
-          value: '卖',
-          itemStyle: { color: '#F56C6C' }
+        if (t.buyDate) {
+          markPointData.push({
+            name: '买入',
+            coord: [t.buyDate, t.buyPrice],
+            value: '买',
+            itemStyle: { color: '#409EFF' }
+          })
+        }
+        if (t.sellDate) {
+          markPointData.push({
+            name: '卖出',
+            coord: [t.sellDate, t.sellPrice],
         })
       }
     }
@@ -1161,6 +1438,18 @@ function drawChart() {
   }
 
   chartInstance.setOption(option)
+}
+
+function createPlanFromAnalysis() {
+  const query = {
+    action: 'create',
+    code: sinaCode.value,
+    name: quoteData.value?.name || '',
+    basePrice: recommendBasePrice.value,
+    ratio: editRatio.value,
+    parts: editParts.value
+  }
+  router.push({ path: '/plans', query })
 }
 </script>
 
