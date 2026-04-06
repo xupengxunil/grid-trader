@@ -305,12 +305,15 @@
                   <el-icon style="margin-right: 4px; vertical-align: middle;"><DataLine /></el-icon>历史回测 (近{{ backtestResult.days }}交易日 - 当前策略：{{ currentStrategyType }})
                 </div>
                 <div style="font-weight: normal; font-size: 13px;">
+                  <el-button size="small" type="primary" plain @click="simulateBestGrid" style="margin-right: 8px;">
+                    <el-icon style="margin-right: 2px;"><Lightning /></el-icon>网格大小优选
+                  </el-button>
                   回测天数:
                   <el-select v-model="backtestDays" size="small" style="width: 100px; margin-left: 8px;" @change="recalcDraw">
+                    <el-option label="10日" :value="10" />
+                    <el-option label="20日" :value="20" />
                     <el-option label="30日" :value="30" />
                     <el-option label="60日" :value="60" />
-                    <el-option label="100日" :value="100" />
-                    <el-option label="120日" :value="120" />
                   </el-select>
                 </div>
               </div>
@@ -446,6 +449,36 @@
                 </el-table-column>
               </el-table>
             </el-card>
+
+          <!-- Grid Size Optimization Chart -->
+          <el-card shadow="hover" style="margin-top: 16px;" v-if="backtestResult">
+            <template #header>
+              <div style="display: flex; align-items: center;">
+                <el-icon style="margin-right: 4px;"><Lightning /></el-icon><span style="font-weight: bold;">多周期最佳网格大小分布 (至今日: 10~100日)</span>
+              </div>
+            </template>
+            <div ref="optChartContainer" style="width: 100%; height: 260px;"></div>
+            <div ref="netProfitChartContainer" style="width: 100%; height: 260px; margin-top: 24px;"></div>
+            <div v-if="multiPeriodAnalysis.max" style="margin-top: 16px;">
+              <el-alert :title="'📈 最佳收益起跑点：' + multiPeriodAnalysis.max" type="success" :closable="false" style="margin-bottom: 8px; line-height: 1.5;"/>
+              <el-alert :title="'📉 最弱表现起跑点：' + multiPeriodAnalysis.min" type="error" :closable="false" style="line-height: 1.5;"/>
+            </div>
+          </el-card>
+
+          <!-- Rolling 20-day Grid Size Optimization Chart -->
+          <el-card shadow="hover" style="margin-top: 16px;" v-if="backtestResult">
+            <template #header>
+              <div style="display: flex; align-items: center;">
+                <el-icon style="margin-right: 4px;"><Lightning /></el-icon><span style="font-weight: bold;">滚动窗口最佳网格大小分布 (固定20个交易日)</span>
+              </div>
+            </template>
+            <div ref="rollingOptChartContainer" style="width: 100%; height: 260px;"></div>
+            <div ref="rollingNetProfitChartContainer" style="width: 100%; height: 260px; margin-top: 24px;"></div>
+            <div v-if="rollingWindowAnalysis.max" style="margin-top: 16px;">
+              <el-alert :title="'🔥 黄金套利窗口：' + rollingWindowAnalysis.max" type="success" :closable="false" style="margin-bottom: 8px; line-height: 1.5;"/>
+              <el-alert :title="'🧊 陷阱雷区窗口：' + rollingWindowAnalysis.min" type="error" :closable="false" style="line-height: 1.5;"/>
+            </div>
+          </el-card>
 
           </el-col>
         </el-row>
@@ -680,6 +713,75 @@ function handleManualChange() {
   recalcDraw()
 }
 
+function simulateBestGrid() {
+  if (!klineList.value || klineList.value.length === 0 || !recommendBasePrice.value) return;
+
+  const days = backtestDays.value;
+  let backtestPeriod = klineList.value;
+  let basePrice = recommendBasePrice.value;
+
+  if (klineList.value.length > 30) {
+    const splitIndex = Math.max(0, klineList.value.length - days);
+    const priorDays = klineList.value.slice(Math.max(0, splitIndex - 30), splitIndex);
+    backtestPeriod = klineList.value.slice(splitIndex);
+
+    if (priorDays.length > 0) {
+      const sum = priorDays.reduce((acc, d) => acc + parseFloat(d.close), 0);
+      basePrice = sum / priorDays.length;
+    }
+  }
+
+  let bestRatio = 3.0;
+  let maxProfit = -1;
+
+  for (let r = 3.0; r <= 6.0; r += 0.1) {
+    const ratio = r / 100;
+    const parts = 10;
+    const tradeUnit = 100;
+    
+    let gridPrices = [];
+    let p = basePrice;
+    for (let i = 0; i < parts; i++) {
+        p = p * (1 - ratio);
+        gridPrices.push(p);
+    }
+    
+    let totalProfit = 0;
+    let gridStatus = new Array(parts).fill(false);
+    
+    for (let dayIndex = 0; dayIndex < backtestPeriod.length; dayIndex++) {
+        let day = backtestPeriod[dayIndex];
+        const low = parseFloat(day.low);
+        const high = parseFloat(day.high);
+        
+        for (let i = 0; i < parts; i++) {
+            if (!gridStatus[i] && low <= gridPrices[i]) {
+                gridStatus[i] = true;
+            }
+        }
+        for (let i = 0; i < parts; i++) {
+            if (gridStatus[i] && high >= gridPrices[i] * (1 + ratio)) {
+                gridStatus[i] = false;
+                totalProfit += gridPrices[i] * ratio * tradeUnit;
+            }
+        }
+    }
+    
+    if (totalProfit > maxProfit) {
+        maxProfit = totalProfit;
+        bestRatio = r;
+    }
+  }
+
+  editRatio.value = parseFloat(bestRatio.toFixed(1));
+  editParts.value = 10;
+  currentStrategyType.value = `优选网格(${backtestDays.value}日)`;
+  ElMessage.success(`已为您计算 ${backtestDays.value}天内的最佳套利网格大小：${bestRatio.toFixed(1)}%，默认10档。`);
+  if (typeof recalcDraw === 'function') {
+    recalcDraw();
+  }
+}
+
 const bottomPrice = computed(() => {
   if (!recommendBasePrice.value) return 0
   const ratio = editRatio.value / 100
@@ -856,6 +958,22 @@ let occupiedCapital = 0
 const chartContainer = ref(null)
 let chartInstance = null
 
+const optChartContainer = ref(null)
+let optChartInstance = null
+
+const netProfitChartContainer = ref(null)
+let netProfitChartInstance = null
+
+const rollingOptChartContainer = ref(null)
+let rollingOptChartInstance = null
+
+const rollingNetProfitChartContainer = ref(null)
+let rollingNetProfitChartInstance = null
+
+const multiPeriodAnalysis = ref({ max: null, min: null })
+const rollingWindowAnalysis = ref({ max: null, min: null })
+const topRollingPeriods = ref([])
+
 function getFormattedSinaCode(code) {
   code = code.trim().toLowerCase();
   if (!code) return '';
@@ -951,6 +1069,8 @@ async function handleSearch() {
       
       loading.value = false 
       await nextTick()
+      drawOptChart()
+      drawRollingOptChart()
       drawChart()
     } else {
       loading.value = false
@@ -959,6 +1079,399 @@ async function handleSearch() {
     ElMessage.error('查询失败')
     loading.value = false
   }
+}
+
+function calcBestGridForDays(days) {
+  if (!klineList.value || klineList.value.length === 0 || !recommendBasePrice.value) {
+    return { ratio: 3.0, netProfit: 0, startDate: '', endDate: '' };
+  }
+
+  let backtestPeriod = klineList.value;
+  let basePrice = recommendBasePrice.value;
+
+  if (klineList.value.length > 30) {
+    const splitIndex = Math.max(0, klineList.value.length - days);
+    const priorDays = klineList.value.slice(Math.max(0, splitIndex - 30), splitIndex);
+    backtestPeriod = klineList.value.slice(splitIndex);
+
+    if (priorDays.length > 0) {
+      const sum = priorDays.reduce((acc, d) => acc + parseFloat(d.close), 0);
+      basePrice = sum / priorDays.length;
+    }
+  }
+
+  let startDate = backtestPeriod.length > 0 ? backtestPeriod[0].day : '';
+
+  let bestRatio = 3.0;
+  let maxProfit = -1;
+  let correspondingNetProfit = 0;
+
+  for (let r = 3.0; r <= 6.0; r += 0.1) {
+    const ratio = r / 100;
+    const parts = 10;
+    const tradeUnit = 100;
+    
+    let gridPrices = [];
+    let p = basePrice;
+    for (let i = 0; i < parts; i++) {
+        p = p * (1 - ratio);
+        gridPrices.push(p);
+    }
+    
+    let totalProfit = 0;
+    let gridStatus = new Array(parts).fill(false);
+    
+    for (let dayIndex = 0; dayIndex < backtestPeriod.length; dayIndex++) {
+        let day = backtestPeriod[dayIndex];
+        const low = parseFloat(day.low);
+        const high = parseFloat(day.high);
+        
+        for (let i = 0; i < parts; i++) {
+            if (!gridStatus[i] && low <= gridPrices[i]) {
+                gridStatus[i] = true;
+            }
+        }
+        for (let i = 0; i < parts; i++) {
+            if (gridStatus[i] && high >= gridPrices[i] * (1 + ratio)) {
+                gridStatus[i] = false;
+                totalProfit += gridPrices[i] * ratio * tradeUnit;
+            }
+        }
+    }
+    
+    let floatingPnL = 0;
+    if (backtestPeriod.length > 0) {
+      const currentEndPx = parseFloat(backtestPeriod[backtestPeriod.length - 1].close);
+      for (let i = 0; i < parts; i++) {
+        if (gridStatus[i]) {
+          floatingPnL += (currentEndPx - gridPrices[i]) * tradeUnit;
+        }
+      }
+    }
+    
+    let totalNetProfit = totalProfit + floatingPnL;
+
+    if (totalProfit > maxProfit) {
+        maxProfit = totalProfit;
+        bestRatio = r;
+        correspondingNetProfit = totalNetProfit;
+    }
+  }
+  return { ratio: parseFloat(bestRatio.toFixed(1)), netProfit: correspondingNetProfit.toFixed(2), startDate: startDate };
+}
+
+function drawOptChart() {
+  if (!optChartContainer.value || !netProfitChartContainer.value) return;
+
+  if (optChartInstance) optChartInstance.dispose();
+  if (netProfitChartInstance) netProfitChartInstance.dispose();
+  
+  optChartInstance = echarts.init(optChartContainer.value);
+  netProfitChartInstance = echarts.init(netProfitChartContainer.value);
+
+  const daysList = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10]; // From oldest to newest
+  const results = daysList.map(d => calcBestGridForDays(d));
+  const xData = results.map((r, i) => `${r.startDate}\n(${daysList[i]}日前)`);
+  const bestRatios = results.map(r => r.ratio);
+  const netProfits = results.map(r => r.netProfit);
+
+  let optMaxIdx = 0;
+  let optMinIdx = 0;
+  for (let i = 1; i < results.length; i++) {
+    if (parseFloat(results[i].netProfit) > parseFloat(results[optMaxIdx].netProfit)) optMaxIdx = i;
+    if (parseFloat(results[i].netProfit) < parseFloat(results[optMinIdx].netProfit)) optMinIdx = i;
+  }
+  
+  multiPeriodAnalysis.value = {
+    max: `建仓于 ${results[optMaxIdx].startDate}（即${daysList[optMaxIdx]}日前），使用该股最优匹配网格 ${results[optMaxIdx].ratio}% 时，持仓综合盈亏高达 ¥${results[optMaxIdx].netProfit}。这意味着自该建仓位以来，该股走出了活跃的宽幅震荡或单边稳步攀升走势，网格极高频且健康地执行了低买高卖的闭环动作，同时未结底仓获得增值。`,
+    min: `建仓于 ${results[optMinIdx].startDate}（即${daysList[optMinIdx]}日前），即便使用了最高胜率的 ${results[optMinIdx].ratio}% 网格避险，仍发生 ¥${results[optMinIdx].netProfit} 的最差综合盈亏表现。根本原因是进场后很快遭遇了中长期的无解单边下挫行情，导致网格筹码全部被套乃至彻底击穿网底，高抛低吸失效并转为被动挨打。`
+  };
+
+  const optionRatio = {
+    title: {
+      text: '最优网格间距走势 (%)',
+      left: 'center',
+      textStyle: { fontSize: 13, color: '#606266' }
+    },
+    tooltip: {
+      trigger: 'axis',
+      formatter: function(params) {
+        const dataIndex = params[0].dataIndex;
+        return `${params[0].name.replace('\\n', ' ')}<br/>最优网格间距: ${bestRatios[dataIndex]}%`;
+      }
+    },
+    grid: { left: '10%', right: '5%', bottom: '20%', top: '25%' },
+    xAxis: {
+      type: 'category',
+      data: xData,
+      axisLabel: { color: '#909399', interval: 0, fontSize: 10 }
+    },
+    yAxis: {
+      type: 'value',
+      min: 2,
+      max: 7,
+      splitLine: { lineStyle: { type: 'dashed' } }
+    },
+    series: [
+      {
+        name: '最优网格间距',
+        type: 'line',
+        smooth: true,
+        data: bestRatios,
+        symbol: 'circle',
+        symbolSize: 8,
+        itemStyle: { color: '#409EFF' },
+        lineStyle: {
+          width: 3,
+          color: '#409EFF',
+          shadowColor: 'rgba(64,158,255,0.3)',
+          shadowBlur: 10,
+          shadowOffsetY: 5
+        },
+        label: {
+          show: true,
+          position: 'top',
+          formatter: '{c}%',
+          color: '#303133',
+          fontWeight: 'bold'
+        },
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: 'rgba(64,158,255,0.3)' },
+            { offset: 1, color: 'rgba(64,158,255,0.05)' }
+          ])
+        }
+      }
+    ]
+  };
+
+  const optionProfit = {
+    title: {
+      text: '综合净资产变化指标 (回测最终盈亏 ¥)',
+      left: 'center',
+      textStyle: { fontSize: 13, color: '#606266' }
+    },
+    tooltip: {
+      trigger: 'axis',
+      formatter: function(params) {
+        const dataIndex = params[0].dataIndex;
+        return `${params[0].name.replace('\\n', ' ')}<br/>综合净资产变化: ¥${netProfits[dataIndex]}`;
+      }
+    },
+    grid: { left: '10%', right: '5%', bottom: '20%', top: '25%' },
+    xAxis: {
+      type: 'category',
+      data: xData,
+      axisLabel: { color: '#909399', interval: 0, fontSize: 10 }
+    },
+    yAxis: {
+      type: 'value',
+      splitLine: { lineStyle: { type: 'dashed' } }
+    },
+    series: [
+      {
+        name: '净资产变化',
+        type: 'bar',
+        barMaxWidth: 30,
+        data: netProfits,
+        itemStyle: {
+          color: function(params) {
+            return params.value >= 0 ? '#F56C6C' : '#67C23A';
+          },
+          borderRadius: [4, 4, 0, 0]
+        },
+        label: {
+          show: true,
+          position: 'top',
+          formatter: '{c}',
+          fontSize: 11
+        }
+      }
+    ]
+  };
+
+  optChartInstance.setOption(optionRatio);
+  netProfitChartInstance.setOption(optionProfit);
+}
+
+function calcBestGridForWindow(startOffset, windowSize) {
+  if (!klineList.value || klineList.value.length === 0 || !recommendBasePrice.value) {
+    return { ratio: 3.0, netProfit: 0, startDate: '', endDate: '' };
+  }
+
+  let backtestPeriod = [];
+  let basePrice = recommendBasePrice.value;
+
+  if (klineList.value.length > 30) {
+    const startIndex = Math.max(0, klineList.value.length - startOffset);
+    const endIndex = Math.min(klineList.value.length, startIndex + windowSize);
+    backtestPeriod = klineList.value.slice(startIndex, endIndex);
+
+    const priorDays = klineList.value.slice(Math.max(0, startIndex - 30), startIndex);
+    if (priorDays.length > 0) {
+      const sum = priorDays.reduce((acc, d) => acc + parseFloat(d.close), 0);
+      basePrice = sum / priorDays.length;
+    }
+  }
+
+  let startDate = backtestPeriod.length > 0 ? backtestPeriod[0].day : '';
+  let endDate = backtestPeriod.length > 0 ? backtestPeriod[backtestPeriod.length - 1].day : '';
+
+  let bestRatio = 3.0;
+  let maxProfit = -1;
+  let correspondingNetProfit = 0;
+  let bestTrades = [];
+
+  for (let r = 3.0; r <= 6.0; r += 0.1) {
+    const ratio = r / 100;
+    const parts = 10;
+    const tradeUnit = 100;
+    
+    let gridPrices = [];
+    let p = basePrice;
+    for (let i = 0; i < parts; i++) {
+        p = p * (1 - ratio);
+        gridPrices.push(p);
+    }
+    
+    let totalProfit = 0;
+    let gridStatus = new Array(parts).fill(false);
+    let currentTrades = [];
+    
+    for (let dayIndex = 0; dayIndex < backtestPeriod.length; dayIndex++) {
+        let day = backtestPeriod[dayIndex];
+        const low = parseFloat(day.low);
+        const high = parseFloat(day.high);
+        
+        for (let i = 0; i < parts; i++) {
+            if (!gridStatus[i] && low <= gridPrices[i]) {
+                gridStatus[i] = true;
+                currentTrades.push({ date: day.day, price: gridPrices[i] });
+            }
+        }
+        for (let i = 0; i < parts; i++) {
+            if (gridStatus[i] && high >= gridPrices[i] * (1 + ratio)) {
+                gridStatus[i] = false;
+                totalProfit += gridPrices[i] * ratio * tradeUnit;
+            }
+        }
+    }
+    
+    let floatingPnL = 0;
+    if (backtestPeriod.length > 0) {
+      const currentEndPx = parseFloat(backtestPeriod[backtestPeriod.length - 1].close);
+      for (let i = 0; i < parts; i++) {
+        if (gridStatus[i]) {
+          floatingPnL += (currentEndPx - gridPrices[i]) * tradeUnit;
+        }
+      }
+    }
+    
+    let totalNetProfit = totalProfit + floatingPnL;
+
+    if (totalProfit > maxProfit) {
+        maxProfit = totalProfit;
+        bestRatio = r;
+        correspondingNetProfit = totalNetProfit;
+        bestTrades = currentTrades;
+    }
+  }
+  return { ratio: parseFloat(bestRatio.toFixed(1)), netProfit: correspondingNetProfit.toFixed(2), startDate: startDate, endDate: endDate, trades: bestTrades };
+}
+
+function drawRollingOptChart() {
+  if (!rollingOptChartContainer.value || !rollingNetProfitChartContainer.value) return;
+
+  if (rollingOptChartInstance) rollingOptChartInstance.dispose();
+  if (rollingNetProfitChartInstance) rollingNetProfitChartInstance.dispose();
+  
+  rollingOptChartInstance = echarts.init(rollingOptChartContainer.value);
+  rollingNetProfitChartInstance = echarts.init(rollingNetProfitChartContainer.value);
+
+  const offsetsList = [120, 110, 100, 90, 80, 70, 60, 50, 40, 30, 20];
+  const results = offsetsList.map(d => calcBestGridForWindow(d, 20));
+  const xData = results.map((r, i) => `${r.startDate}\n(${offsetsList[i]}日前起)`);
+  const bestRatios = results.map(r => r.ratio);
+  const netProfits = results.map(r => r.netProfit);
+
+  let rollMaxIdx = 0;
+  let rollMinIdx = 0;
+  for (let i = 1; i < results.length; i++) {
+    if (parseFloat(results[i].netProfit) > parseFloat(results[rollMaxIdx].netProfit)) rollMaxIdx = i;
+    if (parseFloat(results[i].netProfit) < parseFloat(results[rollMinIdx].netProfit)) rollMinIdx = i;
+  }
+  
+  const sortedPeriods = results.map((r, i) => ({
+    ...r,
+    originalIndex: i
+  })).sort((a, b) => parseFloat(b.netProfit) - parseFloat(a.netProfit));
+
+  topRollingPeriods.value = sortedPeriods.slice(0, 5);
+
+  rollingWindowAnalysis.value = {
+    max: `最丰厚的局部20日行情阶段始于 ${results[rollMaxIdx].startDate}（${offsetsList[rollMaxIdx]}日前，此间最佳适应间距 ${results[rollMaxIdx].ratio}%），20天内可斩获盈亏 ¥${results[rollMaxIdx].netProfit}。该短期切片内有着充沛的做多动能与极其规律的高频反扑动作，构成了套利的最完美“箱体或稳涨”结构。`,
+    min: `最痛苦的局部20日行情阶段始于 ${results[rollMinIdx].startDate}（${offsetsList[rollMinIdx]}日前，即使妥协至 ${results[rollMinIdx].ratio}% 间距防踩空），这20天内心流血净亏 ¥${results[rollMinIdx].netProfit}。核心归咎于该阶段爆发了“滑铁卢式”接连倾盘大跌或动能直接枯竭阴跌，网格交易完全没法在20天内拿到有效修复的价差。`
+  };
+
+  const optionRatio = {
+    title: { text: '固定20天窗口最优网格间距走势 (%)', left: 'center', textStyle: { fontSize: 13, color: '#606266' } },
+    tooltip: {
+      trigger: 'axis',
+      formatter: function(params) {
+        const dataIndex = params[0].dataIndex;
+        return `${params[0].name.replace('\\n', ' ')}<br/>最优网格间距: ${bestRatios[dataIndex]}%`;
+      }
+    },
+    grid: { left: '10%', right: '5%', bottom: '20%', top: '25%' },
+    xAxis: { type: 'category', data: xData, axisLabel: { color: '#909399', interval: 0, fontSize: 10 } },
+    yAxis: { type: 'value', min: 2, max: 7, splitLine: { lineStyle: { type: 'dashed' } } },
+    series: [
+      {
+        name: '最优网格间距',
+        type: 'line',
+        smooth: true,
+        data: bestRatios,
+        symbol: 'circle',
+        symbolSize: 8,
+        itemStyle: { color: '#E6A23C' },
+        lineStyle: { width: 3, color: '#E6A23C', shadowColor: 'rgba(230,162,60,0.3)', shadowBlur: 10, shadowOffsetY: 5 },
+        label: { show: true, position: 'top', formatter: '{c}%', color: '#303133', fontWeight: 'bold' },
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: 'rgba(230,162,60,0.3)' },
+            { offset: 1, color: 'rgba(230,162,60,0.05)' }
+          ])
+        }
+      }
+    ]
+  };
+
+  const optionProfit = {
+    title: { text: '固定20天窗口内净资产变化 (¥)', left: 'center', textStyle: { fontSize: 13, color: '#606266' } },
+    tooltip: {
+      trigger: 'axis',
+      formatter: function(params) {
+        const dataIndex = params[0].dataIndex;
+        return `${params[0].name.replace('\\n', ' ')}<br/>综合净资产变化: ¥${netProfits[dataIndex]}`;
+      }
+    },
+    grid: { left: '10%', right: '5%', bottom: '20%', top: '25%' },
+    xAxis: { type: 'category', data: xData, axisLabel: { color: '#909399', interval: 0, fontSize: 10 } },
+    yAxis: { type: 'value', splitLine: { lineStyle: { type: 'dashed' } } },
+    series: [
+      {
+        name: '净资产变化',
+        type: 'bar',
+        barMaxWidth: 30,
+        data: netProfits,
+        itemStyle: { color: function(params) { return params.value >= 0 ? '#F56C6C' : '#67C23A'; }, borderRadius: [4, 4, 0, 0] },
+        label: { show: true, position: 'top', formatter: '{c}', fontSize: 11 }
+      }
+    ]
+  };
+
+  rollingOptChartInstance.setOption(optionRatio);
+  rollingNetProfitChartInstance.setOption(optionProfit);
 }
 
 function analyzeData(kData, marketMult) {
@@ -1380,6 +1893,24 @@ function drawChart() {
     }
   }
 
+  const markAreaData = []
+  if (topRollingPeriods.value.length > 0) {
+    topRollingPeriods.value.forEach((period, idx) => {
+      if (period.startDate && period.endDate) {
+        markAreaData.push([
+          {
+            xAxis: period.startDate,
+            itemStyle: { color: 'rgba(230, 162, 60, 0.1)' },
+            label: { show: true, position: 'top', color: '#E6A23C', formatter: `最佳20日(No.${idx + 1})\nProfit: ¥${period.netProfit}` }
+          },
+          {
+            xAxis: period.endDate
+          }
+        ])
+      }
+    })
+  }
+
   const option = {
     tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
     legend: { data: ['日K', 'UP', 'MB', 'DN'] },
@@ -1397,6 +1928,9 @@ function drawChart() {
           symbol: ['none', 'none'],
           data: markLineData,
           precision: 3
+        },
+        markArea: {
+          data: markAreaData
         },
         markPoint: {
           data: markPointData,
