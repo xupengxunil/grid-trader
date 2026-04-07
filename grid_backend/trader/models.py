@@ -25,8 +25,10 @@ class UserProfile(models.Model):
         choices=STATUS_CHOICES,
         default=STATUS_PENDING,
         verbose_name='审批状态',
-    )
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name='注册时间')
+    )   
+
+    wechat_webhook = models.URLField(max_length=500, blank=True, null=True, verbose_name='企业微信机器人地址')    
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='注册时间') 
 
     class Meta:
         db_table = 'user_profile'

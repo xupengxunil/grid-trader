@@ -5,6 +5,7 @@ import Statistics from './components/Statistics.vue'
 import StockAnalysis from './components/StockAnalysis.vue'
 import Login from './views/Login.vue'
 import Register from './views/Register.vue'
+import Profile from './views/Profile.vue'
 import { isLoggedIn, isApproved } from './store/auth.js'
 
 const routes = [
@@ -15,6 +16,7 @@ const routes = [
   { path: '/plans/:id', component: PlanDetail, props: true },
   { path: '/statistics', component: Statistics },
   { path: '/analysis', component: StockAnalysis },
+  { path: '/profile', component: Profile },
 ]
 
 const router = createRouter({

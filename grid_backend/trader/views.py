@@ -98,14 +98,21 @@ def logout(request):
     return Response({'detail': '已退出登录。'})
 
 
-@api_view(['GET'])
+@api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated])
 def me(request):
-    """Return the current user's profile info."""
+    """Return or update the current user's profile info."""
     try:
         profile = request.user.profile
     except UserProfile.DoesNotExist:
-        return Response({'detail': '用户资料不存在。'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'detail': '鐢ㄦ埛璧勬枡涓嶅瓨鍦ㄣ€?'}, status=status.HTTP_404_NOT_FOUND)
+    
+    if request.method == 'POST':
+        wechat_webhook = request.data.get('wechat_webhook')
+        if wechat_webhook is not None:
+            profile.wechat_webhook = wechat_webhook
+            profile.save()
+            
     return Response(UserProfileSerializer(profile).data)
 
 

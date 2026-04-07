@@ -27,6 +27,10 @@
           <el-icon><DataLine /></el-icon>
           网格分析
         </el-menu-item>
+        <el-menu-item index="/profile">
+          <el-icon><User /></el-icon>
+          个人中心
+        </el-menu-item>
       </el-menu>
 
       <!-- User info area -->

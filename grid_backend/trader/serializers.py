@@ -54,7 +54,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = UserProfile
-        fields = ['username', 'email', 'status', 'status_display', 'created_at', 'is_staff']
+        fields = ['username', 'email', 'status', 'status_display', 'created_at', 'is_staff', 'wechat_webhook']
 
 
 class GridRecordSerializer(serializers.ModelSerializer):
