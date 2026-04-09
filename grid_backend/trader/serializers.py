@@ -82,13 +82,21 @@ class GridPlanSerializer(serializers.ModelSerializer):
     record_count = serializers.SerializerMethodField()
     holding_count = serializers.SerializerMethodField()
     cleared_count = serializers.SerializerMethodField()
+    shares_per_part = serializers.IntegerField(write_only=True, required=False, allow_null=True)
+
+    def create(self, validated_data):
+        shares_per_part = validated_data.pop('shares_per_part', None)
+        instance = super().create(validated_data)
+        if shares_per_part is not None:
+            instance.shares_per_part = shares_per_part
+        return instance
 
     class Meta:
         model = GridPlan
         fields = [
             'id', 'stock_code', 'stock_name', 'base_price', 'total_funds', 'part_count', 'grid_ratio',
             'is_active', 'created_at', 'updated_at',
-            'records', 'record_count', 'holding_count', 'cleared_count',
+            'records', 'record_count', 'holding_count', 'cleared_count', 'shares_per_part'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 

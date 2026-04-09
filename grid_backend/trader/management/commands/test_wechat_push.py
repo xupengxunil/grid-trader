@@ -48,9 +48,28 @@ class Command(BaseCommand):
                     self.stdout.write(self.style.WARNING(f"未能获取到 {codes} 的行情数据。"))
                     continue
 
-                msg_lines = ["【测试】每日网格股票推荐 (7:00)"]
+                msg_lines = ["\n【测试】每日自选股网格推荐 (7:00)"]
+                recommended_count = 0
                 for _, row in df.iterrows():
                     from trader.apps import check_stock_suitability
+                    
+                    if _ == 0: # Only run market analysis once
+                        market_analysis_lines = ["【大盘(上证)网格适合度分析】"]
+                        sz_code = 'sh000001'
+                        passed, details = check_stock_suitability(sz_code, return_details=True)
+                        if details:
+                            status_icon = "✅ 适合网格" if passed else "❌ 不太适合"
+                            market_analysis_lines.append(f"结果: {status_icon}")
+                            market_analysis_lines.append(
+                                f"详情: 收盘: {details['price']:.2f}, "
+                                f"MA30: {details['ma30']:.2f} (斜率: {details['ma30_slope']:.2f}%), "
+                                f"ATR比例: {details['atr_ratio']:.2f}%, "
+                                f"均线散度: {details['dispersion']:.2f}%, "
+                                f"MACD: {'通过' if details['macd_passed'] else '不通过'}, "
+                                f"BOLL: {'通过' if details['boll_passed'] else '不通过'}"
+                            )
+                        else:
+                            market_analysis_lines.append(f"- 上证指数分析失败")
                     
                     raw_code = str(row['code'])
                     original_code = None
@@ -63,10 +82,15 @@ class Command(BaseCommand):
 
                     if check_stock_suitability(original_code):
                         msg_lines.append(f"- {row['name']} ({original_code}) 当前价: {row['price']} ✅ 完美适合网格")
-                print(msg_lines)
+                        recommended_count += 1
+                        
+                if recommended_count == 0:
+                    msg_lines.append("- 当前自选股中暂无完美适合网格交易的股票。")
                     
-                if len(msg_lines) > 1:
-                    self.send_wechat_msg(webhook, "\n".join(msg_lines))
+                final_msg = "\n".join(market_analysis_lines + msg_lines)
+                print(final_msg)
+                    
+                self.send_wechat_msg(webhook, final_msg)
             except Exception as e:
                 self.stdout.write(self.style.ERROR(f"获取行情出错: {e}"))
 

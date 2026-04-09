@@ -21,7 +21,7 @@ GRID_RATIO = Decimal('0.03')   # 3 % grid interval
 SHARES_PER_LOT = 100    # A-share: 1 lot = 100 shares
 
 
-def _compute_grid_records(plan: GridPlan) -> list[dict]:
+def _compute_grid_records(plan: GridPlan) -> tuple[list[dict], Decimal]:
     """
     Generate part_count grid records from the plan's base price.
 
@@ -38,6 +38,8 @@ def _compute_grid_records(plan: GridPlan) -> list[dict]:
     part_funds = total_funds / Decimal(str(part_count)) if part_count > 0 else Decimal('0')
     
     records = []
+    actual_total_funds = Decimal('0')
+    
     for i in range(part_count):
         buy_price = base * ((1 - ratio) ** i)
         sell_price = buy_price * (1 + ratio)
@@ -46,19 +48,26 @@ def _compute_grid_records(plan: GridPlan) -> list[dict]:
         buy_price = buy_price.quantize(Decimal('0.001'))
         sell_price = sell_price.quantize(Decimal('0.001'))
 
-        # Volume: floor down to whole lots
-        raw_shares = math.floor(float(part_funds / buy_price) / SHARES_PER_LOT) * SHARES_PER_LOT
+        if getattr(plan, 'shares_per_part', None) is not None:
+            raw_shares = (int(plan.shares_per_part) // SHARES_PER_LOT) * SHARES_PER_LOT
+        else:
+            # Volume: floor down to whole lots
+            raw_shares = math.floor(float(part_funds / buy_price) / SHARES_PER_LOT) * SHARES_PER_LOT
+
         if raw_shares < SHARES_PER_LOT:
-            # Less than 1 lot – skip this grid level
+            # Less than 1 lot - skip this grid level
             continue
+
+        raw_shares = int(raw_shares)
+        actual_total_funds += buy_price * Decimal(str(raw_shares))
 
         records.append({
             'part_index': i + 1,
             'target_buy_price': buy_price,
             'target_sell_price': sell_price,
-            'volume': int(raw_shares),
+            'volume': raw_shares,
         })
-    return records
+    return records, actual_total_funds
 
 
 # ── Auth endpoints ─────────────────────────────────────────────────────────────
@@ -127,23 +136,32 @@ def plan_list_create(request):
         serializer = GridPlanListSerializer(plans, many=True)
         return Response(serializer.data)
 
-    # POST – create plan
+    # POST -> create plan
     serializer = GridPlanSerializer(data=request.data)
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    shares_per_part = serializer.validated_data.pop('shares_per_part', None)
     plan = serializer.save(user=request.user)
-    grid_rows = _compute_grid_records(plan)
+    if shares_per_part is not None:
+        plan.shares_per_part = shares_per_part
+        
+    grid_rows, actual_funds = _compute_grid_records(plan)
+    
     if not grid_rows:
         plan.delete()
         return Response(
-            {'detail': '基准价过高，每份资金不足1手，无法生成网格计划。'},
+            {'detail': '基准价过高或股数不足1手，无法生成网格计划。'},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
     for row in grid_rows:
         GridRecord.objects.create(plan=plan, **row)
 
+    if actual_funds > 0 and shares_per_part is not None:
+        plan.total_funds = actual_funds
+        plan.save(update_fields=['total_funds'])
+        
     plan.refresh_from_db()
     return Response(GridPlanSerializer(plan).data, status=status.HTTP_201_CREATED)
 

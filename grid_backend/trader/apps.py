@@ -5,7 +5,7 @@ import datetime
 import requests
 
 
-def check_stock_suitability(symbol):
+def check_stock_suitability(symbol, return_details=False):
     try:
         import tushare as ts
         import numpy as np
@@ -122,15 +122,31 @@ def check_stock_suitability(symbol):
         
         print(f"[{symbol}] DEBUG: cond1({cond1}) cond2({cond2}) cond3({cond3}) cond4({cond4}) boll({bollPassed}) macd({macdPassed}) | Px:{currentPx} ma30:{ma30} ma30slp:{ma30_slope} atr:{atrRatio} disp:{ma_dispersion}")
 
-        return cond1 and cond2 and cond3 and cond4 and bollPassed and macdPassed
+        passed = cond1 and cond2 and cond3 and cond4 and bollPassed and macdPassed
+        if return_details:
+            return passed, {
+                "price": currentPx,
+                "ma30": ma30,
+                "ma30_slope": ma30_slope,
+                "atr_ratio": atrRatio,
+                "dispersion": ma_dispersion,
+                "boll_passed": bollPassed,
+                "macd_passed": macdPassed
+            }
+        return passed
     except Exception as e:
         print(f"Error evaluating {symbol}: {e}")
+        if return_details:
+            return False, {}
         return False
 
 def run_wechat_scheduler():
     from .models import UserProfile, StockWatchlist
     import tushare as ts
     from django.conf import settings
+    import logging
+    
+    logger = logging.getLogger(__name__)
     
     def send_wechat_msg(webhook_url, content):
         if not webhook_url: return
@@ -140,13 +156,18 @@ def run_wechat_scheduler():
         }
         try:
             requests.post(webhook_url, json=msg, timeout=5)
+            logger.info(f"Successfully sent wechat msg to {webhook_url}")
         except Exception as e:
-            print("Failed to send wechat msg:", e)
+            logger.error(f"Failed to send wechat msg: {e}")
             
+    last_run_date = None
     while True:
         now = datetime.datetime.now()
-        # Run at 7:00 AM
-        if now.hour == 7 and now.minute == 0:
+        # Run at 7:00 AM once a day using last_run_date checking to prevent missing minute zero
+        if now.hour == 7 and now.date() != last_run_date:
+            logger.info("Starting scheduled daily WeChat push at 7:00 AM")
+            last_run_date = now.date()
+                
             profiles = UserProfile.objects.exclude(wechat_webhook__isnull=True).exclude(wechat_webhook='')
             if profiles.exists():
                 token = getattr(settings, 'TUSHARE_TOKEN', '')
@@ -157,13 +178,36 @@ def run_wechat_scheduler():
                 for profile in profiles:
                     webhook = profile.wechat_webhook
                     watchlists = StockWatchlist.objects.filter(user=profile.user)
-                    if not watchlists.exists(): continue
+                    if not watchlists.exists():
+                        logger.info(f"User {profile.user.username} has no watchlist, skipping.")
+                        continue
                     
                     codes = [v.stock_code for v in watchlists]
+                    logger.info(f"Processing user {profile.user.username} with watchlist: {codes}")
                     
                     try:
+                        # 1. Analyse Market Indices (Only Shanghai Index)
+                        market_analysis_lines = ["【大盘(上证)网格适合度分析】"]
+                        sz_code = 'sh000001'
+                        passed, details = check_stock_suitability(sz_code, return_details=True)
+                        if details:
+                            status_icon = "✅ 适合网格" if passed else "❌ 不太适合"
+                            market_analysis_lines.append(f"结果: {status_icon}")
+                            market_analysis_lines.append(
+                                f"详情: 收盘: {details['price']:.2f}, "
+                                f"MA30: {details['ma30']:.2f} (斜率: {details['ma30_slope']:.2f}%), "
+                                f"ATR比例: {details['atr_ratio']:.2f}%, "
+                                f"均线散度: {details['dispersion']:.2f}%, "
+                                f"MACD: {'通过' if details['macd_passed'] else '不通过'}, "
+                                f"BOLL: {'通过' if details['boll_passed'] else '不通过'}"
+                            )
+                        else:
+                            market_analysis_lines.append(f"- 上证指数分析失败")
+                                
+                        # 2. Analyse user's watchlist
                         df = ts.get_realtime_quotes(codes)
-                        msg_lines = ["【每日网格股票推荐 (7:00)】"]
+                        msg_lines = ["\n【每日自选股网格推荐 (7:00)】"]
+                        recommended_count = 0
                         for _, row in df.iterrows():
                             raw_code = str(row['code'])
                             
@@ -180,18 +224,22 @@ def run_wechat_scheduler():
                             # Replicate the stock analysis logic from vue
                             if check_stock_suitability(original_code):
                                 msg_lines.append(f"- {row['name']} ({original_code}) 当前价: {row['price']} ✅ 完美适合网格")
+                                recommended_count += 1
                             else:
                                 pass # skip the unsuited
                             
-                        if len(msg_lines) > 1:
-                            send_wechat_msg(webhook, "\n".join(msg_lines))
+                        if recommended_count == 0:
+                            msg_lines.append("- 当前自选股中暂无完美适合网格交易的股票。")
+                            
+                        final_msg = "\n".join(market_analysis_lines + msg_lines)
+                        send_wechat_msg(webhook, final_msg)
                     except Exception as e:
-                        print("Error fetching quotes:", e)
-                        
-            # Sleep until 7:01 to avoid multiple runs
-            time.sleep(60)
-        else:
-            time.sleep(30)
+                        logger.error(f"Error fetching quotes or analysing: {e}")
+            else:
+                logger.info("No profiles with wechat_webhook found.")
+                
+        # sleep 60 seconds
+        time.sleep(60)
 
 
 class TraderConfig(AppConfig):

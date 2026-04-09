@@ -213,13 +213,31 @@
             placeholder="请输入当前股价作为基准"
           />
         </el-form-item>
-        <el-form-item label="总资金(元)" prop="total_funds">
+        <el-form-item label="资金分配模式" prop="fund_mode">
+          <el-radio-group v-model="form.fund_mode">
+            <el-radio label="total_fund">按总资金等分</el-radio>
+            <el-radio label="fixed_shares">每档固定股数</el-radio>
+          </el-radio-group>
+        </el-form-item>
+
+        <el-form-item v-if="form.fund_mode === 'total_fund'" label="总资金(元)" prop="total_funds">
           <el-input-number
             v-model="form.total_funds"
             :precision="2"
             :step="1000"
             :min="1"
             style="width:100%"
+          />
+        </el-form-item>
+        
+        <el-form-item v-else label="每档网格股数" prop="shares_per_part">
+          <el-input-number
+            v-model="form.shares_per_part"
+            :precision="0"
+            :step="100"
+            :min="100"
+            style="width:100%"
+            placeholder="必须是100的整数倍"
           />
         </el-form-item>
         <el-form-item label="网格档位" prop="part_count">
@@ -254,8 +272,7 @@
           </div>
         </el-form-item>
         
-        <!-- Preview Grid Configuration -->
-        <div v-if="form.base_price && form.total_funds && form.part_count && ratioPercent" class="preview-section">
+        <div v-if="form.base_price && form.part_count && ratioPercent && (form.fund_mode === 'total_fund' ? form.total_funds : form.shares_per_part)" class="preview-section">
           <h4 style="margin: 0 0 10px 0; font-size: 14px; color: #606266;">计划试算预览</h4>
           <el-table :data="previewData" size="small" border style="width: 100%" max-height="200">
             <el-table-column prop="part" label="档位" width="60" align="center" />
@@ -265,6 +282,7 @@
             <el-table-column prop="profit" label="预估收益" align="center" />
           </el-table>
           <div style="text-align: right; margin-top: 8px; font-weight: bold; color: #f56c6c; font-size: 14px;">
+            <span v-if="form.fund_mode === 'fixed_shares'" style="color:#909399; margin-right:12px; font-weight:normal; font-size:12px;">预估需占用总资金：¥{{ previewTotalCost }}</span>
             单轮总收益：¥{{ totalPreviewProfit }}
           </div>
           <div v-if="hasInvalidPreview" class="error-text" style="color: #f56c6c; font-size: 12px; margin-top: 5px;">
@@ -276,7 +294,7 @@
           type="info"
           :closable="false"
           style="margin-top:8px"
-          :description="`系统将按每份约 ${ (form.total_funds / form.part_count).toFixed(2) } 元（总资金÷${form.part_count}）和基准价自动生成${form.part_count}档买卖网格（间距${ratioPercent}%）。每档需至少可买1手（100股）。`"
+          :description="form.fund_mode === 'total_fund' ? `系统将按每份约 ${ (form.total_funds / form.part_count).toFixed(2) } 元（总资金÷${form.part_count}）和基准价自动生成${form.part_count}档买卖网格（间距${ratioPercent}%）。每档需至少可买1手（100股）。` : `系统将按每档固定买入 ${Math.floor(form.shares_per_part/100)*100} 股生成${form.part_count}档买卖网格（间距${ratioPercent}%）。越往下的档位因股价更低，实际消耗资金会有所降低。`"
         />
       </el-form>
       <template #footer>
@@ -557,7 +575,9 @@ const form = ref({
   stock_code: '',
   stock_name: '',
   base_price: null,
+  fund_mode: 'total_fund',
   total_funds: 50000,
+  shares_per_part: 500,
   part_count: 5,
 })
 
@@ -565,13 +585,15 @@ const rules = {
   stock_code: [{ required: true, message: '请输入股票代码', trigger: 'blur' }],
   stock_name: [{ required: true, message: '请输入股票名称', trigger: 'blur' }],
   base_price: [{ required: true, type: 'number', message: '请输入建仓基准价', trigger: 'change' }],
+  fund_mode: [{ required: true, message: '请选择模式', trigger: 'change' }],
   total_funds: [{ required: true, type: 'number', message: '请输入总资金', trigger: 'change' }],
+  shares_per_part: [{ required: true, type: 'number', message: '请输入股数', trigger: 'change' }],
   part_count: [{ required: true, type: 'number', message: '请输入网格档数', trigger: 'change' }],
 }
 
 // Preview calculation logic
 const previewData = computed(() => {
-  if (!form.value.base_price || !form.value.total_funds || !form.value.part_count || !ratioPercent.value) {
+  if (!form.value.base_price || !form.value.part_count || !ratioPercent.value) {
     return []
   }
 
@@ -586,7 +608,13 @@ const previewData = computed(() => {
     const sellPrice = buyPrice * (1 + ratio)
     
     // Round down to whole lots (100 shares)
-    const rawShares = Math.floor((partFunds / buyPrice) / 100) * 100
+    let rawShares = 0
+    if (form.value.fund_mode === 'total_fund') {
+      rawShares = Math.floor((partFunds / buyPrice) / 100) * 100
+    } else {
+      rawShares = Math.floor((form.value.shares_per_part || 100) / 100) * 100
+    }
+    
     const profit = (sellPrice - buyPrice) * rawShares
     
     records.push({
@@ -595,7 +623,8 @@ const previewData = computed(() => {
       sell_price: sellPrice.toFixed(3),
       shares: rawShares,
       profit: profit.toFixed(2),
-      raw_profit: profit
+      raw_profit: profit,
+      cost: buyPrice * rawShares
     })
   }
   return records
@@ -603,6 +632,10 @@ const previewData = computed(() => {
 
 const totalPreviewProfit = computed(() => {
   return previewData.value.reduce((sum, item) => sum + item.raw_profit, 0).toFixed(2)
+})
+
+const previewTotalCost = computed(() => {
+  return previewData.value.reduce((sum, item) => sum + item.cost, 0).toFixed(2)
 })
 
 const hasInvalidPreview = computed(() => {
@@ -639,7 +672,7 @@ async function fetchPlans() {
 }
 
 function resetForm() {
-  form.value = { stock_code: '', stock_name: '', base_price: null, total_funds: 50000, part_count: 5 }
+  form.value = { stock_code: '', stock_name: '', base_price: null, fund_mode: 'total_fund', shares_per_part: 500, total_funds: 50000, part_count: 5 }
   ratioPercent.value = 3.0
   recommendedRatio.value = null
   recommendedParts.value = null
@@ -662,6 +695,15 @@ async function submitCreate() {
     ...form.value,
     grid_ratio: ratioPercent.value / 100, // 转换百分比为小数
   }
+
+  if (form.value.fund_mode === 'fixed_shares') {
+    payload.shares_per_part = form.value.shares_per_part
+    // 提供一个估算的 total_funds_cost 作为兜底，后端会覆盖它
+    payload.total_funds = parseFloat(previewTotalCost.value) || 50000
+  } else {
+    delete payload.shares_per_part
+  }
+  delete payload.fund_mode
 
   try {
     await createPlan(payload)
@@ -717,6 +759,8 @@ function duplicatePlan(plan) {
     base_price: parseFloat(plan.base_price),
     total_funds: parseFloat(plan.total_funds),
     part_count: plan.part_count,
+    fund_mode: 'total_fund',
+    shares_per_part: 500,
   }
   ratioPercent.value = plan.grid_ratio ? plan.grid_ratio * 100 : 3.0
   showCreateDialog.value = true
