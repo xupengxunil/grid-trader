@@ -164,81 +164,87 @@ def run_wechat_scheduler():
             
     last_run_date = None
     while True:
-        now = datetime.datetime.now()
-        # Run at 7:00 AM once a day using last_run_date checking to prevent missing minute zero
-        if now.hour == 7 and (last_run_date is None or now.date() > last_run_date):
-            logger.info("Starting scheduled daily WeChat push at 7:00 AM")
-            last_run_date = now.date()
+        try:
+            now = datetime.datetime.now()
+            # Run at 7:00 AM once a day using last_run_date checking to prevent missing minute zero
+            if now.hour == 7 and now.date() != last_run_date:
+                logger.info("Starting scheduled daily WeChat push at 7:00 AM")
+                last_run_date = now.date()
                 
-            profiles = UserProfile.objects.exclude(wechat_webhook__isnull=True).exclude(wechat_webhook='')
-            if profiles.exists():
-                token = getattr(settings, 'TUSHARE_TOKEN', '')
-                if token:
-                    ts.set_token(token)
+                from django.db import close_old_connections
+                close_old_connections()
                 
-                # Fetch suitable grid stocks for each user (for simplicity, sending their watchlists)
-                for profile in profiles:
-                    webhook = profile.wechat_webhook
-                    watchlists = StockWatchlist.objects.filter(user=profile.user)
-                    if not watchlists.exists():
-                        logger.info(f"User {profile.user.username} has no watchlist, skipping.")
-                        continue
+                profiles = UserProfile.objects.exclude(wechat_webhook__isnull=True).exclude(wechat_webhook='')
+                if profiles.exists():
+                    token = getattr(settings, 'TUSHARE_TOKEN', '')
+                    if token:
+                        ts.set_token(token)
                     
-                    codes = [v.stock_code for v in watchlists]
-                    logger.info(f"Processing user {profile.user.username} with watchlist: {codes}")
-                    
-                    try:
-                        # 1. Analyse Market Indices (Only Shanghai Index)
-                        market_analysis_lines = ["【大盘(上证)网格适合度分析】"]
-                        sz_code = 'sh000001'
-                        passed, details = check_stock_suitability(sz_code, return_details=True)
-                        if details:
-                            status_icon = "✅ 适合网格" if passed else "❌ 不太适合"
-                            market_analysis_lines.append(f"结果: {status_icon}")
-                            market_analysis_lines.append(
-                                f"详情: 收盘: {details['price']:.2f}, "
-                                f"MA30: {details['ma30']:.2f} (斜率: {details['ma30_slope']:.2f}%), "
-                                f"ATR比例: {details['atr_ratio']:.2f}%, "
-                                f"均线散度: {details['dispersion']:.2f}%, "
-                                f"MACD: {'通过' if details['macd_passed'] else '不通过'}, "
-                                f"BOLL: {'通过' if details['boll_passed'] else '不通过'}"
-                            )
-                        else:
-                            market_analysis_lines.append(f"- 上证指数分析失败")
-                                
-                        # 2. Analyse user's watchlist
-                        df = ts.get_realtime_quotes(codes)
-                        msg_lines = ["\n【每日自选股网格推荐 (7:00)】"]
-                        recommended_count = 0
-                        for _, row in df.iterrows():
-                            raw_code = str(row['code'])
-                            
-                            # Tushare get_realtime_quotes usually returns numeric codes. Re-add prefix SH/SZ based on watchlists
-                            original_code = None
-                            for c in codes:
-                                if c.endswith(raw_code):
-                                    original_code = c
-                                    break
-                            
-                            if not original_code:
-                                original_code = f"sh{raw_code}" if raw_code.startswith('6') else f"sz{raw_code}"
-                                
-                            # Replicate the stock analysis logic from vue
-                            if check_stock_suitability(original_code):
-                                msg_lines.append(f"- {row['name']} ({original_code}) 当前价: {row['price']} ✅ 完美适合网格")
-                                recommended_count += 1
+                    # Fetch suitable grid stocks for each user (for simplicity, sending their watchlists)
+                    for profile in profiles:
+                        webhook = profile.wechat_webhook
+                        watchlists = StockWatchlist.objects.filter(user=profile.user)
+                        if not watchlists.exists():
+                            logger.info(f"User {profile.user.username} has no watchlist, skipping.")
+                            continue
+                        
+                        codes = [v.stock_code for v in watchlists]
+                        logger.info(f"Processing user {profile.user.username} with watchlist: {codes}")
+                        
+                        try:
+                            # 1. Analyse Market Indices (Only Shanghai Index)
+                            market_analysis_lines = ["【大盘(上证)网格适合度分析】"]
+                            sz_code = 'sh000001'
+                            passed, details = check_stock_suitability(sz_code, return_details=True)
+                            if details:
+                                status_icon = "✅ 适合网格" if passed else "❌ 不太适合"
+                                market_analysis_lines.append(f"结果: {status_icon}")
+                                market_analysis_lines.append(
+                                    f"详情: 收盘: {details['price']:.2f}, "
+                                    f"MA30: {details['ma30']:.2f} (斜率: {details['ma30_slope']:.2f}%), "
+                                    f"ATR比例: {details['atr_ratio']:.2f}%, "
+                                    f"均线散度: {details['dispersion']:.2f}%, "
+                                    f"MACD: {'通过' if details['macd_passed'] else '不通过'}, "
+                                    f"BOLL: {'通过' if details['boll_passed'] else '不通过'}"
+                                )
                             else:
-                                pass # skip the unsuited
-                            
-                        if recommended_count == 0:
-                            msg_lines.append("- 当前自选股中暂无完美适合网格交易的股票。")
-                            
-                        final_msg = "\n".join(market_analysis_lines + msg_lines)
-                        send_wechat_msg(webhook, final_msg)
-                    except Exception as e:
-                        logger.error(f"Error fetching quotes or analysing: {e}")
-            else:
-                logger.info("No profiles with wechat_webhook found.")
+                                market_analysis_lines.append(f"- 上证指数分析失败")
+                                    
+                            # 2. Analyse user's watchlist
+                            df = ts.get_realtime_quotes(codes)
+                            msg_lines = ["\n【每日自选股网格推荐 (7:00)】"]
+                            recommended_count = 0
+                            for _, row in df.iterrows():
+                                raw_code = str(row['code'])
+                                
+                                # Tushare get_realtime_quotes usually returns numeric codes. Re-add prefix SH/SZ based on watchlists
+                                original_code = None
+                                for c in codes:
+                                    if c.endswith(raw_code):
+                                        original_code = c
+                                        break
+                                
+                                if not original_code:
+                                    original_code = f"sh{raw_code}" if raw_code.startswith('6') else f"sz{raw_code}"
+                                    
+                                # Replicate the stock analysis logic from vue
+                                if check_stock_suitability(original_code):
+                                    msg_lines.append(f"- {row['name']} ({original_code}) 当前价: {row['price']} ✅ 完美适合网格")
+                                    recommended_count += 1
+                                else:
+                                    pass # skip the unsuited
+                                
+                            if recommended_count == 0:
+                                msg_lines.append("- 当前自选股中暂无完美适合网格交易的股票。")
+                                
+                            final_msg = "\n".join(market_analysis_lines + msg_lines)
+                            send_wechat_msg(webhook, final_msg)
+                        except Exception as e:
+                            logger.error(f"Error fetching quotes or analysing: {e}")
+                else:
+                    logger.info("No profiles with wechat_webhook found.")
+        except Exception as e:
+            logger.error(f"Scheduler global error: {e}")
                 
         # sleep 60 seconds
         time.sleep(60)
