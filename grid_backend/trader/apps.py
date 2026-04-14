@@ -146,7 +146,9 @@ def run_wechat_scheduler():
     from django.conf import settings
     import logging
     
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
     logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
     
     def send_wechat_msg(webhook_url, content):
         if not webhook_url: return
@@ -164,7 +166,7 @@ def run_wechat_scheduler():
     while True:
         now = datetime.datetime.now()
         # Run at 7:00 AM once a day using last_run_date checking to prevent missing minute zero
-        if now.hour == 7 and now.date() != last_run_date:
+        if now.hour == 7 and (last_run_date is None or now.date() > last_run_date):
             logger.info("Starting scheduled daily WeChat push at 7:00 AM")
             last_run_date = now.date()
                 
