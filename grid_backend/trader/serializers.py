@@ -29,9 +29,36 @@ class UserLoginSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True)
 
     def validate(self, data):
-        user = authenticate(username=data['username'], password=data['password'])
+        from django.core.cache import cache
+        username = data.get('username')
+        password = data.get('password')
+        
+        user = authenticate(username=username, password=password)
+        db_user = User.objects.filter(username=username).first()
+
         if not user:
-            raise serializers.ValidationError('用户名或密码错误。')
+            if db_user:
+                if not db_user.is_active:
+                    raise serializers.ValidationError('账号已被禁用或因多次密码错误被锁定，请联系管理员。')
+                
+                attempts_key = f"login_attempts_{username}"
+                attempts = cache.get(attempts_key, 0) + 1
+                cache.set(attempts_key, attempts, timeout=3600)  # 锁定计数1小时有效
+                
+                if attempts >= 3:
+                    db_user.is_active = False
+                    db_user.save()
+                    cache.delete(attempts_key)
+                    raise serializers.ValidationError('密码输入错误已达3次，您的账号已被锁定，请联系管理员重置密码并解锁。')
+                else:
+                    raise serializers.ValidationError(f'密码输入错误，您还有 {3 - attempts} 次尝试机会。')
+            else:
+                raise serializers.ValidationError('用户名或密码错误。')
+
+        # 登录成功，清除缓存的失败次数
+        if db_user:
+            cache.delete(f"login_attempts_{username}")
+
         if not user.is_active:
             raise serializers.ValidationError('账号已被禁用。')
         try:
