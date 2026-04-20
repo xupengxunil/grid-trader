@@ -6,6 +6,8 @@ import StockAnalysis from './components/StockAnalysis.vue'
 import Login from './views/Login.vue'
 import Register from './views/Register.vue'
 import Profile from './views/Profile.vue'
+import Games from './views/Games.vue'
+import WatchlistOpportunities from './views/WatchlistOpportunities.vue'
 import { isLoggedIn, isApproved } from './store/auth.js'
 
 const routes = [
@@ -16,6 +18,7 @@ const routes = [
   { path: '/plans/:id', component: PlanDetail, props: true },
   { path: '/statistics', component: Statistics },
   { path: '/analysis', component: StockAnalysis },
+  { path: '/games', component: Games },
   { path: '/profile', component: Profile },
 ]
 

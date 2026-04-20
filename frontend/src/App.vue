@@ -5,7 +5,7 @@
 
   <el-container v-else class="layout">
     <el-header class="header">
-      <div class="logo">📈 网格交易管理系统</div>
+      <div class="logo">📈 智能量化交易平台</div>
       <el-menu
         mode="horizontal"
         :default-active="activeMenu"
@@ -25,7 +25,11 @@
         </el-menu-item>
         <el-menu-item index="/analysis">
           <el-icon><DataLine /></el-icon>
-          网格分析
+          行情诊断
+        </el-menu-item>
+        <el-menu-item index="/games">
+          <el-icon><Monitor /></el-icon>
+          摸鱼游戏
         </el-menu-item>
         <el-menu-item index="/profile">
           <el-icon><User /></el-icon>

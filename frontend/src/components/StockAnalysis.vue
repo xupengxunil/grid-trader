@@ -29,15 +29,15 @@
     </div>
 
     <div class="page-header" style="margin-top: 20px;">
-      <h2>网格策略分析</h2>
-      <p style="color: #909399; font-size: 14px; margin-top: 5px;">基于历史真实的K线波动（ATR），自动测算建议的网格密度并在下方模拟拦截网。</p>
+      <h2>量化标的诊断与策略推演</h2>
+      <p style="color: #909399; font-size: 14px; margin-top: 5px;">基于历史真实走势、多项技术指标与全局大盘风向，为您深度体检标的状态并自动推演最优的参数模型。</p>
     </div>
 
     <!-- Market Analysis Section -->
     <el-card class="market-analysis-card" shadow="hover" style="margin-bottom: 20px;">
       <template #header>
         <div style="font-weight: bold; font-size: 16px;">
-          <el-icon style="margin-right: 4px; vertical-align: -2px;"><DataLine /></el-icon>大盘分析 (Market Analysis)
+          <el-icon style="margin-right: 4px; vertical-align: -2px;"><DataLine /></el-icon>综合大盘风向分析 (Market Trends)
         </div>
       </template>
       <el-row :gutter="24" v-loading="marketLoading">
@@ -54,10 +54,22 @@
           </div>
         </el-col>
       </el-row>
-      <div v-if="marketAdvice" class="market-advice">
-        <el-alert :title="marketAdviceTitle" :type="marketAdviceType" :description="marketAdvice" show-icon :closable="false" />
-      </div>
+      <el-row :gutter="24" style="margin-top: 15px;">
+        <el-col :span="12" v-if="marketAdvice">
+          <el-alert :title="marketAdviceTitle" :type="marketAdviceType" show-icon :closable="false" style="height: 100%;">
+            <div v-html="marketAdvice" style="line-height: 1.6; margin-top: 4px;"></div>
+          </el-alert>
+        </el-col>
+        <el-col :span="12" v-if="gridAdvice">
+          <el-alert :title="gridAdviceTitle" :type="gridAdviceType" show-icon :closable="false" style="height: 100%;">
+            <div v-html="gridAdvice" style="line-height: 1.6; margin-top: 4px;"></div>
+          </el-alert>
+        </el-col>
+      </el-row>
     </el-card>
+
+    <!-- Watchlist Opportunities Embedded -->
+    <WatchlistOpportunities @diagnose="handleOppSelect" />
 
     <!-- Watchlist Section replaced by sticky header -->
 
@@ -493,6 +505,7 @@ import { InfoFilled, Lightning, Star, Plus, DataLine, Location } from '@element-
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import { getQuotes, getKLine, getWatchlist, addWatchlist, deleteWatchlist, searchStocks } from '../api/index.js'
+import WatchlistOpportunities from '../views/WatchlistOpportunities.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -516,6 +529,10 @@ const marketIndices = ref({})
 const marketAdviceTitle = ref('')
 const marketAdvice = ref('')
 const marketAdviceType = ref('info')
+
+const gridAdviceTitle = ref('')
+const gridAdvice = ref('')
+const gridAdviceType = ref('info')
 
 async function loadMarketData() {
   marketLoading.value = true
@@ -545,25 +562,42 @@ async function loadMarketData() {
     if (klineRes.data && klineRes.data.length > 0) {
       const closes = klineRes.data.map(d => parseFloat(d.close))
       const current = closes[closes.length - 1]
+      const ma5 = closes.slice(-5).reduce((a, b) => a + b, 0) / Math.min(5, closes.length)
       const ma20 = closes.slice(-20).reduce((a, b) => a + b, 0) / Math.min(20, closes.length)
+      const ma60 = closes.slice(-60).reduce((a, b) => a + b, 0) / Math.min(60, closes.length)
       const volatility = ((Math.max(...closes.slice(-10)) - Math.min(...closes.slice(-10))) / current) * 100
 
-      if (current < ma20 * 0.98) {
-        marketAdviceTitle.value = '网格指数：适宜建仓期 (★★★★★)'
-        marketAdvice.value = '大盘处于弱势下行即底部的区间（上证跌破MA20）。此时多数个股处于低位，是分批建仓、布置大网格防守的好时机，建议采用宽间距稳健型网格。'
-        marketAdviceType.value = 'success'
+      // 大盘综合风向分析
+      let adviceHtml = `<ul style="padding-left: 15px; margin: 5px 0;">`
+      adviceHtml += `<li><b>短期趋势 (MA5)：</b>${current > ma5 ? '多头占优 <span style="color:#f56c6c">↑</span>' : '空头压制 <span style="color:#14b143">↓</span>'}</li>`
+      adviceHtml += `<li><b>中期趋势 (MA20)：</b>${current > ma20 ? '上升通道 <span style="color:#f56c6c">↑</span>' : '下降通道 <span style="color:#14b143">↓</span>'}</li>`
+      adviceHtml += `<li><b>长期趋势 (MA60)：</b>${current > ma60 ? '多头牛市 <span style="color:#f56c6c">↑</span>' : '长线熊市 <span style="color:#14b143">↓</span>'}</li>`
+      adviceHtml += `<li><b>近期波动率：</b>${volatility.toFixed(2)}% ${volatility > 4 ? '(震荡剧烈，适合量化套利)' : '(波动较小，注意防范变盘)'}</li></ul>`
+      
+      marketAdviceTitle.value = '大盘综合风向体检 (综合分析)'
+      marketAdvice.value = adviceHtml
+      let finalMarketType = 'info'
+      if (current > ma20 && current > ma60) finalMarketType = 'success'
+      else if (current < ma20 && current < ma60) finalMarketType = 'warning'
+      marketAdviceType.value = finalMarketType
+
+      // 大盘网格相关分析
+      if (current < ma20 * 0.98 && current < ma60) {
+        gridAdviceTitle.value = '大盘网格模型：绝佳低位建仓期 (★★★★★)'
+        gridAdvice.value = '<b>操作建议：</b>大盘处于下行探底或稳固底部区间。此时系统性风险已集中释放，多数个股处于绝对低位，是**分批建仓、布置大网格防守**的极佳时机。建议采用宽间距、多档位的量化策略低吸筹码。'
+        gridAdviceType.value = 'success'
       } else if (volatility > 4 && current >= ma20 * 0.98 && current <= ma20 * 1.02) {
-        marketAdviceTitle.value = '网格指数：黄金震荡期 (★★★★)'
-        marketAdvice.value = '大盘处于横盘宽幅震荡（上证靠近MA20且波动率较高）。这是网格交易最容易触发买卖、赚取差价的时期！建议采用平衡型网格，密集套利。'
-        marketAdviceType.value = 'warning'
-      } else if (current > ma20 * 1.02) {
-        marketAdviceTitle.value = '网格指数：防踏空期 (★★)'
-        marketAdvice.value = '大盘处于强势上行阶段（上证远高于MA20）。注意！如果在此时运行细密网格，极易过早卖飞所有筹码而踏空行情。建议放大网格间距，减少卖出频率，保留底仓。'
-        marketAdviceType.value = 'error'
+        gridAdviceTitle.value = '大盘网格模型：黄金震荡期 (★★★★)'
+        gridAdvice.value = '<b>操作建议：</b>大盘围绕核心均线作宽幅横盘震荡。这是量化策略和网格交易**最容易触发多频率买卖、赚取复利差价**的时期！建议采用均衡型间距，高频收割波动利润。'
+        gridAdviceType.value = 'warning'
+      } else if (current > ma20 * 1.02 && current > ma60 * 1.02) {
+        gridAdviceTitle.value = '大盘网格模型：高位防踏空期 (★★)'
+        gridAdvice.value = '<b>操作建议：</b>大盘处于极强势的单边上行发散阶段。注意！如果在此时运行细密网格，极易过早卖飞所有筹码而彻底踏空主升浪。建议**停止高频短线量化**，或大幅拉宽卖出网格并保留大部分底仓。'
+        gridAdviceType.value = 'error'
       } else {
-        marketAdviceTitle.value = '网格指数：正常套利阶段 (★★★)'
-        marketAdvice.value = '大盘处于常规震荡趋稳中。网格策略可正常运转，建议关注个股本身的K线形态表现。'
-        marketAdviceType.value = 'info'
+        gridAdviceTitle.value = '大盘网格模型：正常结构性阶段 (★★★)'
+        gridAdvice.value = '<b>操作建议：</b>大盘当前趋势收敛，未出现极端单边走势。量化策略可正常运转，赚钱效应主要取决于**个股本身的独立形态和题材资金面表现**。'
+        gridAdviceType.value = 'info'
       }
     }
   } catch(e) {
@@ -982,6 +1016,12 @@ function getFormattedSinaCode(code) {
   if (/^0|^3/.test(code)) return 'sz' + code;
   if (/^8|^4/.test(code)) return 'bj' + code;
   return code;
+}
+
+function handleOppSelect(code) {
+  stockCodeInput.value = code
+  handleSearch()
+  window.scrollTo({ top: 300, behavior: 'smooth' })
 }
 
 // Autocomplete logic

@@ -3,7 +3,7 @@
     <el-card class="auth-card">
       <template #header>
         <div class="auth-header">
-          <span class="logo">📈 网格交易管理系统</span>
+          <span class="logo">📈 智能量化交易平台</span>
           <h2>登录</h2>
         </div>
       </template>
