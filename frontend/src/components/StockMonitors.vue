@@ -35,7 +35,7 @@
           <el-autocomplete
             v-model="dialogForm.stock_code"
             :fetch-suggestions="querySearchAsync"
-            placeholder="搜索股票代码、拼音或名称"
+            placeholder="搜索或手动输入代码 (港股加hk前缀，如hk00700)"
             @select="handleSelectStock"
             value-key="code"
             style="width: 100%;"

@@ -6,9 +6,15 @@ import logging
 logger = logging.getLogger(__name__)
 
 def fetch_sina_quote(stock_code):
-    # Determine sina prefix
-    prefix = 'sh' if stock_code.startswith('6') else 'sz'
-    full_code = f'{prefix}{stock_code}'
+    stock_code_lower = stock_code.lower()
+    if stock_code_lower.startswith(('sh', 'sz', 'hk')):
+        full_code = stock_code_lower
+    else:
+        if len(stock_code) == 5:
+            prefix = 'hk'
+        else:
+            prefix = 'sh' if stock_code.startswith('6') or stock_code.startswith('5') else 'sz'
+        full_code = f'{prefix}{stock_code}'
     
     url = f'http://hq.sinajs.cn/list={full_code}'
     try:
@@ -19,7 +25,10 @@ def fetch_sina_quote(stock_code):
             content = data_text.split('=')[1].strip().strip('";')
             if content:
                 fields = content.split(',')
-                current_price = float(fields[3])
+                if full_code.startswith('hk'):
+                    current_price = float(fields[6])
+                else:
+                    current_price = float(fields[3])
                 return current_price
     except Exception as e:
         logger.error(f"Error fetching quote for {stock_code}: {e}")
@@ -53,10 +62,15 @@ def scan_stock_prices():
     user_messages = {}
 
     for stock_code, group in grouped_monitors.items():
-        if stock_code.startswith('sh') or stock_code.startswith('sz'):
-            full_code = stock_code
+        stock_code_lower = stock_code.lower()
+        if stock_code_lower.startswith(('sh', 'sz', 'hk')):
+            full_code = stock_code_lower
         else:
-            prefix = 'sh' if stock_code.startswith('6') or stock_code.startswith('5') else 'sz'
+            # 兼容老数据：如果是纯数字，判断长度是否为5位（港股），否则区分沪深
+            if len(stock_code) == 5:
+                prefix = 'hk'
+            else:
+                prefix = 'sh' if stock_code.startswith('6') or stock_code.startswith('5') else 'sz'
             full_code = f'{prefix}{stock_code}'
             
         url = f'http://hq.sinajs.cn/list={full_code}'
@@ -68,7 +82,10 @@ def scan_stock_prices():
                 content = data_text.split('=')[1].strip().strip('";')
                 if content:
                     fields = content.split(',')
-                    current_price = float(fields[3])
+                    if full_code.startswith('hk'):
+                        current_price = float(fields[6])
+                    else:
+                        current_price = float(fields[3])
                 else:
                     current_price = None
             else:

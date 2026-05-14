@@ -436,7 +436,7 @@ def stock_search(request):
         return Response([])
     
     # type=11,12 表示 A股
-    url = f"http://suggest3.sinajs.cn/suggest/type=11,12&key={keyword}"
+    url = f"http://suggest3.sinajs.cn/suggest/type=11,12,31&key={keyword}"
     try:
         r = requests.get(url, timeout=5)
         r.encoding = 'gbk'
