@@ -29,5 +29,7 @@ urlpatterns = [
     # Watchlist
     path('watchlist/', views.watchlist_list_create, name='watchlist-list-create'),
     path('watchlist/<str:code>/', views.watchlist_delete, name='watchlist-delete'),
-]
 
+    path('monitors/', views.StockPriceMonitorViewSet.as_view({'get': 'list', 'post': 'create'}), name='monitor-list-create'),
+    path('monitors/<int:pk>/', views.StockPriceMonitorViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='monitor-detail'),
+]

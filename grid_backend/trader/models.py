@@ -154,3 +154,22 @@ class StockWatchlist(models.Model):
     def __str__(self):
         return f'{self.stock_name}({self.stock_code})'
 
+
+
+class StockPriceMonitor(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='price_monitors', verbose_name='所属用户')
+    stock_code = models.CharField(max_length=20, verbose_name='股票代码')
+    stock_name = models.CharField(max_length=50, verbose_name='股票名称')
+    target_price = models.DecimalField(max_digits=10, decimal_places=3, verbose_name='告警价格')
+    condition = models.CharField(max_length=10, choices=[('above', '高于'), ('below', '低于')], default='below', verbose_name='告警条件')
+    is_active = models.BooleanField(default=True, verbose_name='是否启用')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+
+    class Meta:
+        db_table = 'stock_price_monitor'
+        verbose_name = '股价监控'
+        verbose_name_plural = '股价监控'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.stock_name}({self.stock_code}) - {self.get_condition_display()} {self.target_price}'

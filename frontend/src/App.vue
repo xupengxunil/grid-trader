@@ -31,6 +31,11 @@
           <el-icon><Monitor /></el-icon>
           摸鱼游戏
         </el-menu-item>
+        
+        <el-menu-item index="/monitors">
+          <el-icon><Bell /></el-icon>
+          股价监控
+        </el-menu-item>
         <el-menu-item index="/profile">
           <el-icon><User /></el-icon>
           个人中心

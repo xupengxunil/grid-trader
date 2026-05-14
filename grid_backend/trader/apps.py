@@ -164,6 +164,7 @@ def run_wechat_scheduler():
             logger.error(f"Failed to send wechat msg: {e}")
             
     last_run_date = None
+    last_monitor_date = None
     while True:
         try:
             now = datetime.datetime.now()
@@ -247,6 +248,22 @@ def run_wechat_scheduler():
                     call_command('scan_opportunities')
                 except Exception as e:
                     logger.error(f"Error running scan_opportunities: {e}")
+            
+            # 每天 7:20 执行股价监控扫描
+            if now.hour == 7 and now.minute >= 20 and (last_monitor_date is None or now.date() > last_monitor_date):
+                logger.info("Starting scheduled daily Stock Price Monitor push at 7:20 AM")
+                last_monitor_date = now.date()
+                
+                from django.db import close_old_connections
+                close_old_connections()
+                
+                try:
+                    from .tasks import scan_stock_prices
+                    # scan_stock_prices 被 @shared_task 装饰，但依然可以直接同步调用
+                    scan_stock_prices()
+                except Exception as e:
+                    logger.error(f"Error running scan_stock_prices: {e}")
+
         except Exception as e:
             logger.error(f"Scheduler global error: {e}")
                 

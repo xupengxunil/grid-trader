@@ -6,6 +6,7 @@ import StockAnalysis from './components/StockAnalysis.vue'
 import Login from './views/Login.vue'
 import Register from './views/Register.vue'
 import Profile from './views/Profile.vue'
+import StockMonitors from './components/StockMonitors.vue'
 import Games from './views/Games.vue'
 import WatchlistOpportunities from './views/WatchlistOpportunities.vue'
 import { isLoggedIn, isApproved } from './store/auth.js'
@@ -20,6 +21,7 @@ const routes = [
   { path: '/analysis', component: StockAnalysis },
   { path: '/games', component: Games },
   { path: '/profile', component: Profile },
+  { path: '/monitors', component: StockMonitors },
 ]
 
 const router = createRouter({

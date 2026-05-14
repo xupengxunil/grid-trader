@@ -180,3 +180,12 @@ class StockWatchlistSerializer(serializers.ModelSerializer):
         fields = ['id', 'stock_code', 'stock_name', 'created_at']
         read_only_fields = ['id', 'created_at']
 
+
+
+from .models import StockPriceMonitor
+
+class StockPriceMonitorSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StockPriceMonitor
+        fields = ['id', 'stock_code', 'stock_name', 'target_price', 'condition', 'is_active', 'created_at']
+        read_only_fields = ['id', 'created_at']

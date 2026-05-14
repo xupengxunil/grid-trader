@@ -556,3 +556,18 @@ def watchlist_delete(request, code):
     except StockWatchlist.DoesNotExist:
         return Response(status=status.HTTP_404_NOT_FOUND)
 
+
+
+from rest_framework import viewsets, permissions
+from .models import StockPriceMonitor
+from .serializers import StockPriceMonitorSerializer
+
+class StockPriceMonitorViewSet(viewsets.ModelViewSet):
+    serializer_class = StockPriceMonitorSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return StockPriceMonitor.objects.filter(user=self.request.user)
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)

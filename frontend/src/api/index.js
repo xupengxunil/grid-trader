@@ -70,3 +70,8 @@ export const deleteWatchlist = (code) => http.delete(`/watchlist/${code}/`)
 
 
 export default http
+// Monitors
+export const getMonitors = () => http.get('/monitors/')
+export const createMonitor = (data) => http.post('/monitors/', data)
+export const updateMonitor = (id, data) => http.patch(`/monitors/${id}/`, data)
+export const deleteMonitor = (id) => http.delete(`/monitors/${id}/`)
