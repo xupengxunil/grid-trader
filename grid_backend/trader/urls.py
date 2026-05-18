@@ -24,6 +24,7 @@ urlpatterns = [
     # Quotes
     path('quotes/', views.stock_quotes, name='stock-quotes'),
     path('kline/', views.stock_kline, name='stock-kline'),
+    path('daily_basic/', views.stock_daily_basic, name='stock-daily-basic'),
     path('search/', views.stock_search, name='stock-search'),
     
     # Watchlist

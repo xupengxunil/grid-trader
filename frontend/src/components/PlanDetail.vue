@@ -305,7 +305,8 @@ let chartInstance = null
 function getSinaCode(code) {
   code = code.trim().toLowerCase();
   if (!code) return '';
-  if (code.startsWith('sh') || code.startsWith('sz') || code.startsWith('bj')) return code;
+  if (code.startsWith('sh') || code.startsWith('sz') || code.startsWith('bj') || code.startsWith('hk')) return code;
+  if (/^\d{5}$/.test(code)) return 'hk' + code;
   if (/^6/.test(code)) return 'sh' + code;
   if (/^0|^3/.test(code)) return 'sz' + code;
   if (/^8|^4/.test(code)) return 'bj' + code;

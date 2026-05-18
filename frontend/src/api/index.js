@@ -61,6 +61,9 @@ export const searchStocks = (keyword) => http.get('/search/', { params: { keywor
 export const getKLine = (symbol, scale = 60, datalen = 100) => 
   http.get('/kline/', { params: { symbol, scale, datalen } })
 
+export const getDailyBasic = (symbol, datalen = 250) =>
+  http.get('/daily_basic/', { params: { symbol, datalen } })
+
 
 
 // Watchlist

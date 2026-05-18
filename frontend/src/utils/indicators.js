@@ -236,3 +236,60 @@ export function analyzeSignals(klineData) {
 
   return signals;
 }
+
+export function analyzeLongTermSignals(klineData) {
+  const signals = {
+      score: 0,
+      tags: []
+  };
+
+  if (!klineData || klineData.length < 200) {
+    signals.tags.push({ text: '数据不足200个交易日', type: 'info' });
+    return { signals, ma200: '-', bias: '-' };
+  }
+
+  const closePrices = klineData.map(d => parseFloat(d.close));
+  const lastIdx = klineData.length - 1;
+  const currentPrice = closePrices[lastIdx];
+  
+  // Calculate MA200
+  const recent200 = closePrices.slice(-200);
+  const ma200 = recent200.reduce((a, b) => a + b, 0) / 200;
+  
+  // Calculate 60MA for trend reference
+  const recent60 = closePrices.slice(-60);
+  const ma60 = recent60.reduce((a, b) => a + b, 0) / 60;
+
+  const bias = (((currentPrice - ma200) / ma200) * 100).toFixed(2);
+  
+  const ma200Value = ma200.toFixed(2);
+  
+  // Analysis logic
+  if (currentPrice > ma200) {
+    if (bias <= 5) {
+      signals.tags.push({ text: '回踩200MA支撑区附近', type: 'success' }); // Green means good
+      signals.score += 4;
+    } else if (bias <= 15) {
+      signals.tags.push({ text: '安全之上(15%以内)', type: 'success' });
+      signals.score += 2;
+    } else {
+      signals.tags.push({ text: '偏离度过高(>15%)', type: 'warning' });
+      signals.score -= 1;
+    }
+  } else {
+    if (bias >= -5) {
+      signals.tags.push({ text: '200MA下方徘徊(近区)', type: 'warning' });
+      signals.score += 1;
+    } else {
+      signals.tags.push({ text: '跌破牛熊分界线(较深)', type: 'danger' }); // Red means risk
+      signals.score -= 2;
+    }
+  }
+  
+  if (ma60 > ma200 && currentPrice > ma60) {
+     signals.tags.push({ text: '多头排列', type: 'success' });
+     signals.score += 1;
+  }
+
+  return { signals, ma200: ma200Value, bias: bias };
+}

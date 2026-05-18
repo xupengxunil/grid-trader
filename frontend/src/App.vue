@@ -23,9 +23,17 @@
           <el-icon><TrendCharts /></el-icon>
           收益统计
         </el-menu-item>
+        <el-menu-item index="/watchlist">
+          <el-icon><Star /></el-icon>
+          自选股
+        </el-menu-item>
         <el-menu-item index="/analysis">
           <el-icon><DataLine /></el-icon>
-          行情诊断
+          短线诊断
+        </el-menu-item>
+        <el-menu-item index="/long-analysis">
+          <el-icon><DataAnalysis /></el-icon>
+          长线诊断
         </el-menu-item>
         <el-menu-item index="/games">
           <el-icon><Monitor /></el-icon>

@@ -465,10 +465,14 @@ def stock_kline(request):
     import tushare as ts
     from django.conf import settings
     import pandas as pd
+    import logging
+    logger = logging.getLogger(__name__)
     
     symbol = request.GET.get('symbol', '') # e.g., sh600519
     # scale = request.GET.get('scale', '60') # Tushare 免费接口多为日线，这里按日线处理
     datalen = int(request.GET.get('datalen', '100'))
+    
+    logger.info(f"stock_kline requested for symbol: {symbol}, datalen: {datalen}")
     
     if not symbol:
         return Response([])
@@ -480,6 +484,10 @@ def stock_kline(request):
             ts_code = f"{symbol[2:]}.SH"
         elif symbol.lower().startswith('sz'):
             ts_code = f"{symbol[2:]}.SZ"
+        elif symbol.lower().startswith('hk'):
+            ts_code = f"{symbol[2:]}.HK"
+            
+        logger.info(f"Converted ts_code: {ts_code}")
             
         # 设置 Tushare Token。请在 settings.py 中配置 TUSHARE_TOKEN
         token = getattr(settings, 'TUSHARE_TOKEN', '')
@@ -493,36 +501,96 @@ def stock_kline(request):
         if ts_code in ['000001.SH', '399001.SZ', '399006.SZ', '000300.SH', '000016.SH']:
             asset_type = 'I'
             
+        logger.info(f"Using asset_type: {asset_type}")
+            
         # 获取日线级别前复权数据（此处使用通用行情接口，需根据权限支持调整）
         df = ts.pro_bar(ts_code=ts_code, asset=asset_type, adj='qfq', start_date='', end_date='')
         
-        if df is None or df.empty:
-            return Response([])
+        if df is None:
+            logger.warning(f"ts.pro_bar returned None for {ts_code}")
+            df = pd.DataFrame()
             
-        # 取最近的一段数据
-        df = df.head(datalen)
-        
-        # 转换为前端/图表库（或者是以前的新浪数据）兼容的格式
+        if df.empty:
+            logger.warning(f"ts.pro_bar returned empty DataFrame for {ts_code}")
+            
         data = []
-        for _, row in df.iterrows():
-            # Tushare 的 trade_date 格式为 'YYYYMMDD'
-            date_str = str(row['trade_date'])
-            formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
+        if not df.empty:
+            logger.info(f"ts.pro_bar returned {len(df)} rows")
             
-            data.append({
-                "day": formatted_date,
-                "open": str(row['open']),
-                "high": str(row['high']),
-                "low": str(row['low']),
-                "close": str(row['close']),
-                "volume": str(row['vol'])
-            })
+            # 取最近的一段数据
+            df = df.head(datalen)
             
-        # Tushare 返回的数据是倒序（最新的在前），反转数组以便于图表按顺序绘制
-        data.reverse()
+            # 转换为前端/图表库（或者是以前的新浪数据）兼容的格式
+            for _, row in df.iterrows():
+                # Tushare 的 trade_date 格式为 'YYYYMMDD'
+                date_str = str(row['trade_date'])
+                formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
+                
+                data.append({
+                    "day": formatted_date,
+                    "open": str(row['open']),
+                    "high": str(row['high']),
+                    "low": str(row['low']),
+                    "close": str(row['close']),
+                    "volume": str(row['vol'])
+                })
+                
+            # Tushare 返回的数据是倒序（最新的在前），反转数组以便于图表按顺序绘制
+            data.reverse()
+        
+        # 兼容补充最新一天的实时行情
+        try:
+            import requests
+            full_code = symbol.lower()
+            if not full_code.startswith(('sh', 'sz', 'hk')):
+                if len(full_code) == 5:
+                    prefix = 'hk'
+                else:
+                    prefix = 'sh' if full_code.startswith('6') or full_code.startswith('5') else 'sz'
+                full_code = f'{prefix}{full_code}'
+                
+            sina_url = f'http://hq.sinajs.cn/list={full_code}'
+            response = requests.get(sina_url, headers={'Referer': 'http://finance.sina.com.cn'}, timeout=5)
+            response.encoding = 'gbk'
+            data_text = response.text
+            if '=' in data_text:
+                content = data_text.split('=')[1].strip().strip('";')
+                if content:
+                    fields = content.split(',')
+                    if full_code.startswith('hk'):
+                        current_price = float(fields[6])
+                        open_price = float(fields[2])
+                        high = float(fields[4])
+                        low = float(fields[5])
+                        date_str = fields[17].replace('/', '-')
+                    else:
+                        current_price = float(fields[3])
+                        open_price = float(fields[1])
+                        high = float(fields[4])
+                        low = float(fields[5])
+                        date_str = fields[30]
+                        
+                    if current_price > 0:
+                        if len(data) > 0 and data[-1]['day'] == date_str:
+                            data[-1]['close'] = str(current_price)
+                            data[-1]['high'] = str(max(float(data[-1]['high']), high))
+                            data[-1]['low'] = str(min(float(data[-1]['low']), low))
+                        elif len(data) == 0 or date_str > data[-1]['day']:
+                            data.append({
+                                "day": date_str,
+                                "open": str(open_price),
+                                "high": str(high),
+                                "low": str(low),
+                                "close": str(current_price),
+                                "volume": data[-1]['volume'] if len(data) > 0 else "0"
+                            })
+        except Exception as e:
+            logger.error(f"Error fetching Sina quote for {full_code}: {e}")
+            pass
         
         return Response(data)
     except Exception as e:
+        logger.error(f"Error in stock_kline: {e}", exc_info=True)
         return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -557,6 +625,53 @@ def watchlist_delete(request, code):
         return Response(status=status.HTTP_404_NOT_FOUND)
 
 
+
+@api_view(['GET'])
+def stock_daily_basic(request):
+    """Fetch daily basic data (PE, PB, etc.) using Tushare."""
+    import tushare as ts
+    from django.conf import settings
+    import pandas as pd
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    symbol = request.GET.get('symbol', '')
+    datalen = int(request.GET.get('datalen', '250'))
+    
+    if not symbol:
+        return Response([])
+        
+    try:
+        ts_code = symbol
+        if symbol.lower().startswith('sh'):
+            ts_code = f"{symbol[2:]}.SH"
+        elif symbol.lower().startswith('sz'):
+            ts_code = f"{symbol[2:]}.SZ"
+            
+        pro = ts.pro_api()
+        df = pro.daily_basic(ts_code=ts_code, fields='trade_date,close,pe,pe_ttm,pb,dv_ratio')
+        
+        if df is None or df.empty:
+            return Response([])
+            
+        df = df.sort_values('trade_date', ascending=False).head(datalen)
+        df = df.sort_values('trade_date', ascending=True)
+        
+        data = []
+        for _, row in df.iterrows():
+            data.append({
+                'trade_date': row['trade_date'],
+                'close': row['close'],
+                'pe': row['pe'],
+                'pe_ttm': row['pe_ttm'],
+                'pb': row['pb'],
+                'dv_ratio': row['dv_ratio']
+            })
+            
+        return Response(data)
+    except Exception as e:
+        logger.error(f"Error in stock_daily_basic: {e}")
+        return Response([])
 
 from rest_framework import viewsets, permissions
 from .models import StockPriceMonitor

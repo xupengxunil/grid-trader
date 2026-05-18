@@ -68,9 +68,6 @@
       </el-row>
     </el-card>
 
-    <!-- Watchlist Opportunities Embedded -->
-    <WatchlistOpportunities @diagnose="handleOppSelect" />
-
     <!-- Watchlist Section replaced by sticky header -->
 
     <el-card class="search-card" shadow="hover">
@@ -505,7 +502,6 @@ import { InfoFilled, Lightning, Star, Plus, DataLine, Location } from '@element-
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import { getQuotes, getKLine, getWatchlist, addWatchlist, deleteWatchlist, searchStocks } from '../api/index.js'
-import WatchlistOpportunities from '../views/WatchlistOpportunities.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -1011,17 +1007,12 @@ const topRollingPeriods = ref([])
 function getFormattedSinaCode(code) {
   code = code.trim().toLowerCase();
   if (!code) return '';
-  if (code.startsWith('sh') || code.startsWith('sz') || code.startsWith('bj')) return code;
+  if (code.startsWith('sh') || code.startsWith('sz') || code.startsWith('bj') || code.startsWith('hk')) return code;
+  if (/^\d{5}$/.test(code)) return 'hk' + code;
   if (/^6/.test(code)) return 'sh' + code;
   if (/^0|^3/.test(code)) return 'sz' + code;
   if (/^8|^4/.test(code)) return 'bj' + code;
   return code;
-}
-
-function handleOppSelect(code) {
-  stockCodeInput.value = code
-  handleSearch()
-  window.scrollTo({ top: 300, behavior: 'smooth' })
 }
 
 // Autocomplete logic

@@ -165,11 +165,12 @@ def run_wechat_scheduler():
             
     last_run_date = None
     last_monitor_date = None
+    last_longterm_date = None
     while True:
         try:
             now = datetime.datetime.now()
-            # Run at 7:00 AM once a day
-            if now.hour == 7 and (last_run_date is None or now.date() > last_run_date):
+            # 每天 7:00 执行网格适宜度推送
+            if now.hour == 7 and now.minute >= 0 and (last_run_date is None or now.date() > last_run_date):
                 logger.info("Starting scheduled daily WeChat push at 7:00 AM")
                 last_run_date = now.date()
                 
@@ -249,9 +250,9 @@ def run_wechat_scheduler():
                 except Exception as e:
                     logger.error(f"Error running scan_opportunities: {e}")
             
-            # 每天 7:20 执行股价监控扫描
-            if now.hour == 7 and now.minute >= 20 and (last_monitor_date is None or now.date() > last_monitor_date):
-                logger.info("Starting scheduled daily Stock Price Monitor push at 7:20 AM")
+            # 每天 7:10 执行股价监控扫描
+            if now.hour == 7 and now.minute >= 10 and (last_monitor_date is None or now.date() > last_monitor_date):
+                logger.info("Starting scheduled daily Stock Price Monitor push at 7:10 AM")
                 last_monitor_date = now.date()
                 
                 from django.db import close_old_connections
@@ -263,6 +264,20 @@ def run_wechat_scheduler():
                     scan_stock_prices()
                 except Exception as e:
                     logger.error(f"Error running scan_stock_prices: {e}")
+            
+            # 每天 7:15 执行股价长期分析扫描推送
+            if now.hour == 7 and now.minute >= 15 and (last_longterm_date is None or now.date() > last_longterm_date):
+                logger.info("Starting scheduled daily Long-Term Analysis push at 7:15 AM")
+                last_longterm_date = now.date()
+                
+                from django.db import close_old_connections
+                close_old_connections()
+                
+                try:
+                    logger.info("Calling scan_longterm management command...")
+                    call_command('scan_longterm')
+                except Exception as e:
+                    logger.error(f"Error running scan_longterm: {e}")
 
         except Exception as e:
             logger.error(f"Scheduler global error: {e}")

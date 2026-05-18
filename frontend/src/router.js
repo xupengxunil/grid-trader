@@ -3,6 +3,7 @@ import PlanList from './components/PlanList.vue'
 import PlanDetail from './components/PlanDetail.vue'
 import Statistics from './components/Statistics.vue'
 import StockAnalysis from './components/StockAnalysis.vue'
+import LongTermAnalysis from './views/LongTermAnalysis.vue'
 import Login from './views/Login.vue'
 import Register from './views/Register.vue'
 import Profile from './views/Profile.vue'
@@ -19,6 +20,8 @@ const routes = [
   { path: '/plans/:id', component: PlanDetail, props: true },
   { path: '/statistics', component: Statistics },
   { path: '/analysis', component: StockAnalysis },
+  { path: '/long-analysis', component: LongTermAnalysis },
+  { path: '/watchlist', component: WatchlistOpportunities },
   { path: '/games', component: Games },
   { path: '/profile', component: Profile },
   { path: '/monitors', component: StockMonitors },
